@@ -12,9 +12,21 @@ const os = require("os");
 const { spawn, exec } = require("child_process");
 const crypto = require("crypto");
 
+let CONTACT_EMAIL = "you@example.com"; // default, can be overridden in settings
+let CONTACT_DISCORD = "@YourDiscord";  // default, can be overridden in settings
+
+const TIMEKEEPING_POLICY_SUMMARY = `
+By using this logger you agree that:
+- Your entries may be treated as official work records.
+- You are responsible for reviewing your own logs for accuracy.
+- If you disagree with an edit or believe a log is inaccurate, you must dispute it in writing (email or Discord DM) as soon as reasonably possible.
+- False or inflated hours are not allowed.
+`;
+
 const app = express();
 const DB_PATH = path.join(__dirname, "logs.db");
 console.log("Server started");
+
 
 
 
@@ -30,6 +42,52 @@ db.get("SELECT value FROM settings WHERE key = 'admin_password_set'", (err, row)
 console.log("Database connected");
 
 // ---------- DB setup ----------
+db.run(`
+CREATE TABLE IF NOT EXISTS logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  date TEXT,
+  hours REAL,
+  content TEXT,
+  image_url TEXT,
+  media_path TEXT,
+  media_type TEXT,
+  username TEXT,
+  deleted INTEGER DEFAULT 0,
+  deleted_at TEXT,
+  deleted_by TEXT,
+  delete_reason TEXT
+)
+`);
+db.run(`
+CREATE TABLE IF NOT EXISTS log_deletions (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  log_id INTEGER,
+  deleted_at TEXT,
+  deleted_by TEXT,
+  reason TEXT
+)
+`);
+// Ensure legal_hold flag exists (0 = off, 1 = on)
+db.run(
+  "INSERT OR IGNORE INTO settings (key, value) VALUES ('legal_hold', '0')"
+);
+
+db.run(`
+CREATE TABLE IF NOT EXISTS log_history (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  log_id INTEGER,
+  edited_at TEXT,
+  editor_username TEXT,
+  old_date TEXT,
+  old_hours REAL,
+  old_content TEXT,
+  old_image_url TEXT,
+  old_media_path TEXT,
+  old_media_type TEXT,
+  old_username TEXT
+)
+`);
+
 db.run(`
 CREATE TABLE IF NOT EXISTS logs (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,6 +145,54 @@ let ADMIN_PASSWORD_HASH = null;
 let REQUIRE_ADMIN_SETUP = false;
 
 // ---------- Helpers ----------
+// Load / update contact email & discord from settings
+function loadContactSettings() {
+  // Email
+  db.get(
+    "SELECT value FROM settings WHERE key = 'contact_email'",
+    (err, row) => {
+      if (row && row.value != null) {
+        CONTACT_EMAIL = row.value;
+      } else {
+        db.run(
+          "INSERT OR IGNORE INTO settings (key, value) VALUES ('contact_email', ?)",
+          [CONTACT_EMAIL]
+        );
+      }
+    }
+  );
+
+  // Discord
+  db.get(
+    "SELECT value FROM settings WHERE key = 'contact_discord'",
+    (err, row) => {
+      if (row && row.value != null) {
+        CONTACT_DISCORD = row.value;
+      } else {
+        db.run(
+          "INSERT OR IGNORE INTO settings (key, value) VALUES ('contact_discord', ?)",
+          [CONTACT_DISCORD]
+        );
+      }
+    }
+  );
+}
+
+function updateContactSettings(email, discord) {
+  CONTACT_EMAIL = email;
+  CONTACT_DISCORD = discord;
+
+  db.run(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('contact_email', ?)",
+    [CONTACT_EMAIL]
+  );
+  db.run(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('contact_discord', ?)",
+    [CONTACT_DISCORD]
+  );
+}
+
+
 function escapeHtml(str) {
   if (!str) return "";
   return String(str)
@@ -109,6 +215,20 @@ function getCookies(req) {
     cookies[k] = decodeURIComponent(rest.join("="));
   }
   return cookies;
+}
+function getSetting(key, cb) {
+  db.get("SELECT value FROM settings WHERE key = ?", [key], (err, row) => {
+    if (err) return cb(err);
+    cb(null, row ? row.value : null);
+  });
+}
+
+function setSetting(key, value, cb) {
+  db.run(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)",
+    [key, value],
+    cb || (() => {})
+  );
 }
 
 // These now rely on session middleware (see below)
@@ -236,6 +356,10 @@ db.run("ALTER TABLE logs ADD COLUMN media_path TEXT", () => {});
 db.run("ALTER TABLE logs ADD COLUMN media_type TEXT", () => {});
 db.run("ALTER TABLE logs ADD COLUMN username TEXT", () => {});
 db.run("ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0", () => {});
+db.run("ALTER TABLE logs ADD COLUMN deleted INTEGER DEFAULT 0", () => {});
+db.run("ALTER TABLE logs ADD COLUMN deleted_at TEXT", () => {});
+db.run("ALTER TABLE logs ADD COLUMN deleted_by TEXT", () => {});
+db.run("ALTER TABLE logs ADD COLUMN delete_reason TEXT", () => {});
 
 // Load / update default password from settings
 function loadDefaultPassword() {
@@ -299,6 +423,7 @@ function saveAdminPasswordHash(hash, cb) {
 
 loadDefaultPassword();
 loadAdminPassword();
+loadContactSettings();
 
 // ---------- Session-based auth helpers + middleware ----------
 function createSession(res, username, isAdminFlag) {
@@ -441,6 +566,363 @@ function restoreFromBackup(backupFilePath, callback) {
     callback(e);
   }
 }
+// ---------- Edit form (admin only, GET) ----------
+app.get("/edit/:id", (req, res) => {
+  if (!isAdmin(req)) {
+    return res.status(403).send("Forbidden");
+  }
+
+  const id = req.params.id;
+  db.get("SELECT * FROM logs WHERE id = ?", [id], (err, log) => {
+    if (err || !log) {
+      return res.status(404).send("Log not found");
+    }
+
+    const safeUsername = escapeHtml(log.username || "");
+    const safeDate = escapeHtml(log.date || "");
+    const safeImageUrl = escapeHtml(log.image_url || "");
+    const safeContent = escapeHtml(log.content || "");
+    const hoursVal = Number(log.hours) || 0;
+
+    res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Edit Log #${log.id}</title>
+      <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+      <style>
+        body { font-family: system-ui, sans-serif; margin:0; background:#f3f4f6; }
+        .shell { min-height:100vh; display:flex; align-items:flex-start; justify-content:center; padding:24px 12px; }
+        .card {
+          background:white;
+          padding:22px 24px;
+          border-radius:18px;
+          border:1px solid #e5e7eb;
+          box-shadow:0 10px 25px rgba(15,23,42,0.08);
+          width:100%;
+          max-width:900px;
+        }
+        h1 { margin:0 0 8px; font-size:20px; }
+        p.sub { margin:0 0 14px; font-size:13px; color:#6b7280; }
+        label { font-size:13px; font-weight:500; }
+        input {
+          padding:7px 9px;
+          font-family:inherit;
+          font-size:13px;
+          border-radius:10px;
+          border:1px solid #d1d5db;
+          width:100%;
+        }
+        textarea {
+          width:100%;
+          min-height:260px;
+          padding:8px 10px;
+          font-family:inherit;
+          font-size:13px;
+          border-radius:10px;
+          border:1px solid #d1d5db;
+          resize:vertical;
+        }
+        button {
+          padding:8px 14px;
+          border-radius:999px;
+          border:none;
+          background:#00a2ff;
+          color:white;
+          font-weight:500;
+          cursor:pointer;
+        }
+        .secondary {
+          background:#e5e7eb;
+          color:#111827;
+        }
+        .field { margin-bottom:12px; }
+        .label-row {
+          display:flex;
+          justify-content:space-between;
+          align-items:center;
+        }
+        .hint { font-size:11px; color:#6b7280; }
+        .layout {
+          display:flex;
+          gap:16px;
+          align-items:flex-start;
+        }
+        .half { flex:1; min-width:0; }
+        #preview {
+          border:1px solid #e5e7eb;
+          padding:10px;
+          border-radius:10px;
+          min-height:260px;
+          background:#fafafa;
+          font-size:13px;
+        }
+        h3 { margin:0 0 6px; font-size:14px; }
+        a { font-size:12px; color:#6b7280; text-decoration:none; }
+        a:hover { text-decoration:underline; }
+        @media (max-width:800px) {
+          .layout { flex-direction:column; }
+        }
+        .warn {
+          font-size:12px;
+          color:#b91c1c;
+          background:#fef2f2;
+          border-radius:8px;
+          padding:8px 10px;
+          border:1px solid #fecaca;
+          margin-bottom:10px;
+        }
+      </style>
+    </head>
+    <body>
+      <div class="shell">
+        <div class="card">
+          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
+            <div>
+              <h1>Edit Log #${log.id}</h1>
+              <p class="sub">All edits are recorded with a full history of previous versions.</p>
+            </div>
+            <div style="font-size:12px; color:#6b7280; text-align:right;">
+              <div><a href="/">⬅ Back to logs</a></div>
+              <div><a href="/logs/${log.id}/history">View edit history</a></div>
+            </div>
+          </div>
+
+          <div class="warn">
+            <strong>Note:</strong> This change will be stored in the edit history, including your username, the previous hours/date/content, and the time of the edit.
+            If the original user disputes this change, they must contact us at <code>${CONTACT_EMAIL}</code> or <code>${CONTACT_DISCORD}</code>.
+          </div>
+
+          <form method="POST" action="/edit/${log.id}" enctype="multipart/form-data">
+            <div class="field">
+              <div class="label-row">
+                <label>User</label>
+              </div>
+              <input type="text" name="username" value="${safeUsername}" />
+            </div>
+
+            <div class="field">
+              <div class="label-row">
+                <label>Date</label>
+              </div>
+              <input type="date" name="date" value="${safeDate}" required />
+            </div>
+
+            <div class="field">
+              <div class="label-row">
+                <label>Hours Worked</label>
+              </div>
+              <input type="number" step="0.1" name="hours" value="${hoursVal.toFixed(
+                2
+              )}" required />
+            </div>
+
+            <div class="field">
+              <div class="label-row">
+                <label>Image URL (optional)</label>
+              </div>
+              <input type="url" name="image_url" value="${safeImageUrl}" placeholder="https://example.com/image.png" />
+            </div>
+
+            <div class="field">
+              <div class="label-row">
+                <label>Upload Image/Video (optional)</label>
+                <span class="hint">Uploading a new file replaces the existing media.</span>
+              </div>
+              <input type="file" name="media" accept="image/*,video/*" />
+            </div>
+
+            <div class="field">
+              <div class="label-row">
+                <label>Log (Markdown)</label>
+              </div>
+              <div class="layout">
+                <div class="half">
+                  <h3>Editor</h3>
+                  <textarea id="content" name="content">${safeContent}</textarea>
+                </div>
+                <div class="half">
+                  <h3>Live Preview</h3>
+                  <div id="preview"></div>
+                </div>
+              </div>
+            </div>
+
+            <div style="margin-top:14px; display:flex; gap:10px; align-items:center;">
+              <button type="submit">Save Changes</button>
+              <a href="/" class="secondary">Cancel</a>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <script>
+        const textarea = document.getElementById("content");
+        const preview = document.getElementById("preview");
+
+        function updatePreview() {
+          const text = textarea.value || "Start typing to see a preview...";
+          preview.innerHTML = marked.parse(text);
+        }
+
+        textarea.addEventListener("input", updatePreview);
+        updatePreview();
+      </script>
+    </body>
+    </html>
+    `);
+  });
+});
+
+
+app.get("/logs/:id/history", (req, res) => {
+  if (!isAdmin(req)) {
+    return res.status(403).send("Forbidden");
+  }
+
+  const id = req.params.id;
+
+  // Fetch current log + its history
+  db.get("SELECT * FROM logs WHERE id = ?", [id], (err, log) => {
+    if (err || !log) {
+      return res.status(404).send("Log not found");
+    }
+
+    db.all(
+      "SELECT * FROM log_history WHERE log_id = ? ORDER BY edited_at DESC, id DESC",
+      [id],
+      (histErr, historyRows) => {
+        if (histErr) {
+          return res.status(500).send("Error loading history");
+        }
+
+        const historyHtml =
+          historyRows.length === 0
+            ? "<p class=\"sub\">No edits recorded for this log yet.</p>"
+            : historyRows
+                .map((h) => {
+                  const when = h.edited_at || "";
+                  const editor = h.editor_username || "unknown";
+                  const oldUser = h.old_username || "";
+                  const oldDate = h.old_date || "";
+                  const oldHours = h.old_hours != null ? h.old_hours : "";
+                  const safeContent = escapeHtml(h.old_content || "");
+
+                  return `
+                    <details style="border:1px solid #e5e7eb; border-radius:10px; padding:8px 10px; margin-bottom:8px; background:#f9fafb;">
+                      <summary style="cursor:pointer; font-size:13px;">
+                        <strong>Edited at:</strong> ${escapeHtml(
+                          when
+                        )} &mdash; <strong>Editor:</strong> ${escapeHtml(
+                    editor
+                  )}
+                        ${
+                          oldUser
+                            ? ` &mdash; <strong>User:</strong> @${escapeHtml(
+                                oldUser
+                              )}`
+                            : ""
+                        }
+                        ${
+                          oldDate
+                            ? ` &mdash; <strong>Date:</strong> ${escapeHtml(
+                                oldDate
+                              )}`
+                            : ""
+                        }
+                        ${
+                          oldHours !== ""
+                            ? ` &mdash; <strong>Hours:</strong> ${oldHours}`
+                            : ""
+                        }
+                      </summary>
+                      <div style="margin-top:6px; font-size:13px;">
+                        <pre style="white-space:pre-wrap; font-family:inherit; background:white; border-radius:6px; padding:6px; border:1px solid #e5e7eb; max-height:280px; overflow:auto;">${safeContent}</pre>
+                      </div>
+                    </details>
+                  `;
+                })
+                .join("");
+
+        const safeCurrentUser = log.username ? escapeHtml(log.username) : "";
+        const safeCurrentDate = log.date ? escapeHtml(log.date) : "";
+        const safeCurrentContent = escapeHtml(log.content || "");
+
+        res.send(`
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <title>Log #${log.id} &mdash; Edit History</title>
+          <style>
+            body { font-family: system-ui, sans-serif; margin:0; background:#f3f4f6; }
+            .shell { min-height:100vh; display:flex; align-items:flex-start; justify-content:center; padding:24px 12px; }
+            .card {
+              background:white;
+              padding:22px 24px;
+              border-radius:16px;
+              border:1px solid #e5e7eb;
+              box-shadow:0 10px 25px rgba(15,23,42,0.08);
+              width:100%;
+              max-width:840px;
+            }
+            h1 { margin:0 0 8px; font-size:20px; }
+            h2 { margin:16px 0 8px; font-size:16px; }
+            p.sub { margin:0 0 10px; font-size:13px; color:#6b7280; }
+            a { font-size:12px; color:#2563eb; text-decoration:none; }
+            a:hover { text-decoration:underline; }
+            .current {
+              background:#f9fafb;
+              border-radius:10px;
+              padding:10px 12px;
+              border:1px solid #e5e7eb;
+              font-size:13px;
+            }
+            .current pre {
+              white-space:pre-wrap;
+              font-family:inherit;
+              margin:6px 0 0;
+            }
+          </style>
+        </head>
+        <body>
+          <div class="shell">
+            <div class="card">
+              <div style="margin-bottom:10px; font-size:12px;">
+                <a href="/">⬅ Back to logs</a> ·
+                <a href="/edit/${log.id}">Edit this log</a>
+              </div>
+              <h1>Log #${log.id} &mdash; Edit History</h1>
+              <p class="sub">Review previous versions of this log. Each edit stores the prior state, including content, hours, date, and user.</p>
+
+              <h2>Current Version</h2>
+              <div class="current">
+                <div>
+                  ${
+                    safeCurrentUser
+                      ? `<strong>User:</strong> @${safeCurrentUser} &mdash; `
+                      : ""
+                  }
+                  ${
+                    safeCurrentDate
+                      ? `<strong>Date:</strong> ${safeCurrentDate} &mdash; `
+                      : ""
+                  }
+                  <strong>Hours:</strong> ${(Number(log.hours) || 0).toFixed(2)}
+                </div>
+                <pre>${safeCurrentContent}</pre>
+              </div>
+
+              <h2>Previous Versions</h2>
+              ${historyHtml}
+            </div>
+          </div>
+        </body>
+        </html>
+        `);
+      }
+    );
+  });
+});
 
 // ---------- Homepage – list logs, grouped by date, filter by username ----------
 app.get("/", (req, res) => {
@@ -460,7 +942,12 @@ app.get("/", (req, res) => {
     return;
   }
 
-  db.all("SELECT * FROM logs ORDER BY date DESC, id DESC", (err, rows) => {
+  db.all(
+  `SELECT l.*,
+          EXISTS(SELECT 1 FROM log_history h WHERE h.log_id = l.id) AS has_history
+   FROM logs l
+   ORDER BY l.date DESC, l.id DESC`,
+  (err, rows) => {
     if (err) {
       res.status(500).send("DB error");
       return;
@@ -536,27 +1023,31 @@ app.get("/", (req, res) => {
                 </div>
               `;
             }
-
+            
             const adminActions = admin
-              ? `
-              <div class="admin-actions">
+            ? `
+            <div class="admin-actions">
                 <a href="/edit/${log.id}" class="pill-button pill-button-ghost">Edit</a>
                 <form method="POST" action="/delete/${log.id}" style="display:inline;" onsubmit="return confirm('Delete this log?');">
-                  <button type="submit" class="pill-button pill-button-danger">Delete</button>
+                <button type="submit" class="pill-button pill-button-danger">Delete</button>
                 </form>
-              </div>
+            </div>
             `
-              : "";
+            : "";
 
             const usernameLabel = log.username
               ? `<span class="username-badge">@${escapeHtml(log.username)}</span>`
               : `<span class="username-badge username-anon">[no user]</span>`;
 
+            const editedBadge = log.has_history
+            ? '<span class="edited-badge">Edited</span>'
+            : "";
             return `
               <article class="log-card">
                 <header class="log-header">
                   <div>
                     ${usernameLabel}
+                    ${editedBadge}
                     <div class="hours-row">
                       <span class="hours-label">Hours</span>
                       <span class="hours-value">${log.hours}</span>
@@ -569,6 +1060,18 @@ app.get("/", (req, res) => {
                   ${mediaHtml}
                 </div>
                 ${adminActions}
+                <div class="log-footer">
+                  ${
+                    log.has_history
+                      ? `<a href="/logs/${log.id}/history" class="history-link">View edit history</a> · `
+                      : ""
+                  }
+                  <span class="dispute-hint">
+                    If you believe this log is incorrect, contact
+                    <code>${CONTACT_EMAIL}</code> or <code>${CONTACT_DISCORD}</code>.
+                  </span>
+                </div>
+
               </article>
             `;
           })
@@ -619,6 +1122,32 @@ app.get("/", (req, res) => {
     <head>
       <title>Daily Logs</title>
       <style>
+        .edited-badge {
+          display:inline-flex;
+          align-items:center;
+          padding:2px 6px;
+          margin-left:6px;
+          border-radius:999px;
+          background:#fef3c7;
+          color:#92400e;
+          font-size:10px;
+          font-weight:600;
+          text-transform:uppercase;
+          letter-spacing:0.06em;
+        }
+        .log-footer {
+          margin-top:6px;
+          font-size:11px;
+          color: var(--text-muted);
+        }
+        .history-link {
+          font-size:11px;
+        }
+        .history-link:hover { text-decoration:underline; }
+        .dispute-hint code {
+          font-size:11px;
+        }
+
         :root {
           --bg: #f3f4f6;
           --surface: #ffffff;
@@ -914,16 +1443,18 @@ app.get("/", (req, res) => {
                     )}</span> <a href="/logout" class="pill-button pill-button-ghost">User Logout</a>`
                   : `<a href="/login" class="pill-button pill-button-ghost">User Login</a>`
               }
-              ${
+             <a href="/policy" class="pill-button pill-button-ghost">Timekeeping Policy</a>
+
+             ${
                 admin
-                  ? `<span>Admin</span>
-                     <a href="/admin/logout" class="pill-button pill-button-ghost">Logout</a>
-                     <a href="/admin/users" class="pill-button pill-button-ghost">Users</a>
-                     <a href="/admin/missed" class="pill-button pill-button-ghost">Missed Hours</a>
-                     <a href="/admin/backups" class="pill-button pill-button-ghost">Backups</a>
-                     <a href="/admin/password" class="pill-button pill-button-ghost">Admin Password</a>`
-                  : `<a href="/admin" class="pill-button pill-button-ghost">Admin</a>`
-              }
+                    ? `
+                    <span>Admin</span>
+                    <a href="/admin/panel" class="pill-button pill-button-ghost">Admin Panel</a>
+                    <a href="/admin/logout" class="pill-button pill-button-ghost">Logout</a>
+                    `
+                    : `<a href="/admin" class="pill-button pill-button-ghost">Admin</a>`
+                }
+
               <a href="/new" class="pill-button">➕ New Log</a>
             </div>
           </header>
@@ -967,6 +1498,116 @@ app.get("/", (req, res) => {
     `;
     res.send(html);
   });
+});
+app.get("/admin/panel", (req, res) => {
+  if (!isAdmin(req)) {
+    return res.status(403).send("Forbidden");
+  }
+
+  res.send(`
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <title>Admin Panel</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin:0; background:#f3f4f6; }
+      .shell {
+        min-height:100vh;
+        display:flex;
+        align-items:flex-start;
+        justify-content:center;
+        padding:24px 12px;
+      }
+      .card {
+        background:white;
+        padding:22px 24px;
+        border-radius:16px;
+        border:1px solid #e5e7eb;
+        box-shadow:0 10px 25px rgba(15,23,42,0.08);
+        width:100%;
+        max-width:600px;
+      }
+      h1 { margin:0 0 8px; font-size:20px; }
+      p.sub { margin:0 0 14px; font-size:13px; color:#6b7280; }
+
+      a { text-decoration:none; }
+      a:hover { text-decoration:underline; }
+
+      .top-link { margin-bottom:10px; font-size:12px; }
+
+      .btn-row {
+        display:flex;
+        flex-direction:column;
+        gap:8px;
+        margin-top:12px;
+      }
+
+      .pill-button {
+        border-radius:999px;
+        border:1px solid #d1d5db;
+        padding:8px 14px;
+        font-size:13px;
+        font-weight:500;
+        cursor:pointer;
+        background:#f9fafb;
+        color:#111827;
+        display:inline-flex;
+        align-items:center;
+        justify-content:space-between;
+        gap:8px;
+      }
+      .pill-button span.label {
+        display:inline-block;
+      }
+      .pill-button span.desc {
+        font-size:11px;
+        color:#6b7280;
+      }
+      .pill-button-primary {
+        background:#00a2ff;
+        border-color:#00a2ff;
+        color:white;
+      }
+      .pill-button-primary span.desc {
+        color:#e0f2ff;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="card">
+        <div class="top-link"><a href="/">⬅ Back to logs</a></div>
+        <h1>Admin Panel</h1>
+        <p class="sub">
+          Central place for all admin tools: users, passwords, backups, and missed-hours checks.
+        </p>
+
+        <div class="btn-row">
+          <a href="/admin/users" class="pill-button pill-button-primary">
+            <span class="label">Manage Users</span>
+            <span class="desc">Create, reset, or delete user accounts &amp; set DefaultPassword</span>
+          </a>
+
+          <a href="/admin/missed" class="pill-button">
+            <span class="label">Missed Hours</span>
+            <span class="desc">See which users logged 0 hours for a given day</span>
+          </a>
+
+          <a href="/admin/backups" class="pill-button">
+            <span class="label">Backups &amp; Restore</span>
+            <span class="desc">Create, download, restore, or delete backups</span>
+          </a>
+
+          <a href="/admin/password" class="pill-button">
+            <span class="label">Admin Password</span>
+            <span class="desc">Change the admin login password</span>
+          </a>
+        </div>
+      </div>
+    </div>
+  </body>
+  </html>
+  `);
 });
 
 // ---------- Admin setup (first time) ----------
@@ -1028,6 +1669,87 @@ app.get("/admin/setup", (req, res) => {
           <input type="password" name="confirm" required />
           <button type="submit">Save Admin Password</button>
         </form>
+      </div>
+    </div>
+  </body>
+  </html>
+  `);
+});
+// ---------- Timekeeping Policy ----------
+app.get("/policy", (req, res) => {
+  res.send(`
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <title>Timekeeping Policy</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin:0; background:#f3f4f6; }
+      .shell { min-height:100vh; display:flex; align-items:flex-start; justify-content:center; padding:24px 12px; }
+      .card {
+        background:white;
+        padding:22px 24px;
+        border-radius:16px;
+        border:1px solid #e5e7eb;
+        box-shadow:0 10px 25px rgba(15,23,42,0.08);
+        width:100%;
+        max-width:720px;
+      }
+      h1 { margin:0 0 8px; font-size:20px; }
+      h2 { margin:16px 0 6px; font-size:15px; }
+      p, li { font-size:13px; color:#374151; }
+      ul { padding-left:18px; }
+      p.sub { margin:0 0 10px; font-size:13px; color:#6b7280; }
+      a { font-size:12px; color:#2563eb; text-decoration:none; }
+      a:hover { text-decoration:underline; }
+      code { font-size:12px; }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="card">
+        <div style="margin-bottom:10px; font-size:12px;">
+          <a href="/">⬅ Back to logs</a>
+        </div>
+        <h1>Timekeeping &amp; Work Log Policy</h1>
+        <p class="sub">Last updated: ${new Date().toISOString().split("T")[0]}</p>
+
+        <h2>Purpose</h2>
+        <p>Daily Logger is used to record work performed, including hours and descriptions of tasks. These logs may be treated as official work records for internal use, including (for example) payroll, performance review, and legal purposes.</p>
+
+        <h2>Your Responsibilities</h2>
+        <ul>
+          <li>Submit logs that are accurate and honest to the best of your knowledge.</li>
+          <li>Review your own logs regularly, including any edits made by an admin.</li>
+          <li>Promptly dispute any log or edit you believe is inaccurate.</li>
+        </ul>
+
+        <p>If you disagree with a log or edit, you must raise the issue in writing (for example, email or Discord DM):</p>
+        <ul>
+          <li>Email: <code>${CONTACT_EMAIL}</code></li>
+          <li>Discord: <code>${CONTACT_DISCORD}</code></li>
+        </ul>
+
+        <h2>Edits &amp; History</h2>
+        <ul>
+          <li>Admins may correct logs where there are obvious errors, inconsistencies, or rule violations.</li>
+          <li>Whenever an admin edits a log, the prior version is stored in the edit history, including the previous hours, date, content, username, the editor's username, and the time of the edit.</li>
+          <li>Edited logs are visibly marked as "Edited" and provide a link to review the history.</li>
+        </ul>
+
+        <h2>Disputes</h2>
+        <p>If you believe a log is wrong or that an edit changed your hours incorrectly, you should:</p>
+        <ol>
+          <li>Review the edit history for that log.</li>
+          <li>Contact us in writing at <code>${CONTACT_EMAIL}</code> or <code>${CONTACT_DISCORD}</code> with:
+            <ul>
+              <li>The log ID (e.g. #12)</li>
+              <li>The date of the log</li>
+              <li>What you believe is wrong and what you believe the correct hours/details should be</li>
+            </ul>
+          </li>
+        </ol>
+
+        <p class="sub" style="margin-top:14px;">This page is an internal policy summary and is not formal legal advice. For any legal questions or disputes, the company may consult legal counsel.</p>
       </div>
     </div>
   </body>
@@ -1390,6 +2112,7 @@ app.get("/admin/users", (req, res) => {
             <a href="/admin/password">Change Admin Password</a> ·
             <a href="/admin/backups">Backups &amp; Restore</a> ·
             <a href="/admin/missed">Missed Hours</a>
+            <a href="/admin/legal-hold">Legal Hold</a>
           </div>
 
           <h2>DefaultPassword</h2>
@@ -1401,7 +2124,29 @@ app.get("/admin/users", (req, res) => {
             )}" />
             <button type="submit" style="margin-left:6px;">Save Default</button>
           </form>
-
+        <h2>Contact Info (Disputes)</h2>
+          <p class="sub">
+            This email and Discord handle are shown to users as the official place to dispute logs or edits.
+          </p>
+          <form method="POST" action="/admin/settings/contact" style="margin-bottom:14px;">
+            <div style="display:flex; flex-wrap:wrap; gap:8px; align-items:center;">
+              <div style="flex:1; min-width:160px;">
+                <label>Contact Email</label><br>
+                <input type="email" name="contact_email" value="${escapeHtml(
+                  CONTACT_EMAIL
+                )}" />
+              </div>
+              <div style="flex:1; min-width:160px;">
+                <label>Contact Discord</label><br>
+                <input type="text" name="contact_discord" value="${escapeHtml(
+                  CONTACT_DISCORD
+                )}" />
+              </div>
+              <div>
+                <button type="submit">Save Contact Info</button>
+              </div>
+            </div>
+          </form>
           <h2>Create New User</h2>
           <form method="POST" action="/admin/users">
             <div style="display:flex; gap:8px; flex-wrap:wrap; align-items:center;">
@@ -1440,6 +2185,92 @@ app.get("/admin/users", (req, res) => {
     `);
     }
   );
+});
+// ---------- Admin: Legal Hold toggle ----------
+app.get("/admin/legal-hold", (req, res) => {
+  if (!isAdmin(req)) return res.status(403).send("Forbidden");
+
+  getSetting("legal_hold", (err, val) => {
+    if (err) {
+      console.error("Error loading legal_hold:", err);
+      return res.status(500).send("Error loading legal hold setting.");
+    }
+
+    const isOn = val === "1";
+
+    res.send(`
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Legal Hold</title>
+      <style>
+        body { font-family: system-ui, sans-serif; margin:0; background:#f3f4f6; }
+        .shell { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px; }
+        .card {
+          background:white;
+          padding:24px 28px;
+          border-radius:16px;
+          border:1px solid #e5e7eb;
+          box-shadow:0 10px 25px rgba(15,23,42,0.08);
+          width:100%;
+          max-width:420px;
+        }
+        h1 { margin:0 0 8px; font-size:20px; }
+        p.sub { margin:0 0 16px; font-size:13px; color:#6b7280; }
+        label { font-size:13px; font-weight:500; }
+        button {
+          padding:8px 14px;
+          border-radius:999px;
+          border:none;
+          background:#00a2ff;
+          color:white;
+          font-weight:500;
+          cursor:pointer;
+          width:100%;
+          margin-top:8px;
+        }
+        a { font-size:12px; color:#6b7280; text-decoration:none; }
+        a:hover { text-decoration:underline; }
+      </style>
+    </head>
+    <body>
+      <div class="shell">
+        <div class="card">
+          <p><a href="/">⬅ Back to logs</a></p>
+          <h1>Legal Hold</h1>
+          <p class="sub">
+            When Legal Hold is enabled, log deletion is blocked.
+            This is used when a dispute, audit, or investigation is reasonably expected.
+          </p>
+          <form method="POST" action="/admin/legal-hold">
+            <label>
+              <input type="checkbox" name="on" value="1" ${isOn ? "checked" : ""} />
+              Enable Legal Hold (block all deletions)
+            </label>
+            <button type="submit">Save</button>
+          </form>
+          <p class="sub" style="margin-top:10px;">
+            Current status: <strong>${isOn ? "ON" : "OFF"}</strong>
+          </p>
+        </div>
+      </div>
+    </body>
+    </html>
+    `);
+  });
+});
+
+app.post("/admin/legal-hold", (req, res) => {
+  if (!isAdmin(req)) return res.status(403).send("Forbidden");
+
+  const on = !!req.body.on; // needs bodyParser, which you already use
+  setSetting("legal_hold", on ? "1" : "0", (err) => {
+    if (err) {
+      console.error("Error saving legal_hold:", err);
+      return res.status(500).send("Error saving legal hold setting.");
+    }
+    res.redirect("/admin/legal-hold");
+  });
 });
 
 // Update DefaultPassword setting
@@ -1503,6 +2334,30 @@ app.post("/admin/users", (req, res) => {
       );
     });
   }
+});
+// Update contact email / discord
+app.post("/admin/settings/contact", (req, res) => {
+  if (!isAdmin(req)) return res.status(403).send("Forbidden");
+
+  let email = (req.body.contact_email || "").trim();
+  let discord = (req.body.contact_discord || "").trim();
+
+  // Basic sanity checks (you can relax/tighten as you want)
+  if (!email && !discord) {
+    return res.send(
+      'At least one contact method (email or Discord) is required. <a href="/admin/users">Back</a>'
+    );
+  }
+
+  // Simple email pattern check (not perfect, just stops obvious typos)
+  if (email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    return res.send(
+      'Invalid email format. <a href="/admin/users">Back</a>'
+    );
+  }
+
+  updateContactSettings(email || CONTACT_EMAIL, discord || CONTACT_DISCORD);
+  res.redirect("/admin/users");
 });
 
 // Reset password for a specific user (invalidate sessions)
@@ -1860,7 +2715,8 @@ app.post("/upload-inline", upload.single("file"), (req, res) => {
 app.get("/new", (req, res) => {
   const currentUser = getCurrentUser(req);
   const admin = isAdmin(req);
-  if (!currentUser && !admin) {
+  const userNameForLog = currentUser || (admin ? "admin" : null);
+  if (!userNameForLog) {
     res.redirect("/login");
     return;
   }
@@ -2031,7 +2887,24 @@ app.get("/new", (req, res) => {
               </div>
             </div>
           </div>
-
+        <div class="field" style="margin-top:10px;">
+            <div style="font-size:11px; color:#6b7280; margin-bottom:6px;">
+              <strong>Work Log Acknowledgment</strong><br>
+              By submitting this log, you confirm that:
+              <ul style="margin:4px 0 0 18px; padding:0; font-size:11px;">
+                <li>The hours and description are accurate to the best of your knowledge.</li>
+                <li>This entry may be used as an official work record.</li>
+                <li>You will review your logs and dispute any edits or changes you believe are incorrect using email or Discord DM.</li>
+              </ul>
+              <div style="margin-top:4px;">
+                Dispute channel: <code>${CONTACT_EMAIL}</code> or <code>${CONTACT_DISCORD}</code>
+              </div>
+            </div>
+            <label style="display:flex; align-items:flex-start; gap:6px; font-size:12px;">
+              <input type="checkbox" name="acknowledge_official" required />
+              <span>I understand this log is an official work record and that I must review and dispute any errors in writing.</span>
+            </label>
+          </div>
           <div style="margin-top:14px; display:flex; gap:10px; align-items:center;">
             <button type="submit">Save Log</button>
             <a href="/" class="secondary">Cancel</a>
@@ -2187,361 +3060,94 @@ app.get("/new", (req, res) => {
 });
 
 // ---------- Edit form (admin only, with upload & paste) ----------
-app.get("/edit/:id", (req, res) => {
+app.post("/edit/:id", upload.single("media"), (req, res) => {
   if (!isAdmin(req)) {
     res.status(403).send("Forbidden");
     return;
   }
 
   const id = req.params.id;
-  db.get("SELECT * FROM logs WHERE id = ?", [id], (err, log) => {
-    if (!log) {
-      res.status(404).send("Not found");
-      return;
-    }
+  const { date, hours, content, image_url, username } = req.body;
 
-    const safeContent = escapeHtml(log.content || "");
-    const safeImageUrl = escapeHtml(log.image_url || "");
-    const safeDate = escapeHtml(log.date || "");
-    const safeUsername = escapeHtml(log.username || "");
-
-    let currentMediaHtml = "";
-    if (log.media_path) {
-      const safePath = escapeHtml(log.media_path);
-      if (log.media_type === "video") {
-        currentMediaHtml = `
-          <div style="margin-top:8px;">
-            <strong>Current uploaded media:</strong><br>
-            <video controls style="max-width:300px;height:auto;">
-              <source src="${safePath}">
-            </video>
-          </div>
-        `;
-      } else {
-        currentMediaHtml = `
-          <div style="margin-top:8px;">
-            <strong>Current uploaded media:</strong><br>
-            <img src="${safePath}" style="max-width:300px;height:auto;" />
-          </div>
-        `;
+  // Fetch the current log row so we can store it in history
+  db.get(
+    "SELECT * FROM logs WHERE id = ?",
+    [id],
+    (err, currentLog) => {
+      if (err || !currentLog) {
+        return res.status(404).send("Log not found");
       }
-    }
 
-    res.send(`
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Edit Log #${log.id}</title>
-      <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-      <style>
-        body { font-family: system-ui, sans-serif; margin:0; background:#f3f4f6; }
-        .shell { min-height:100vh; display:flex; align-items:flex-start; justify-content:center; padding:24px 12px; }
-        .card {
-          background:white;
-          padding:22px 24px;
-          border-radius:18px;
-          border:1px solid #e5e7eb;
-          box-shadow:0 10px 25px rgba(15,23,42,0.08);
-          width:100%;
-          max-width:900px;
-        }
-        h1 { margin:0 0 8px; font-size:20px; }
-        p.sub { margin:0 0 12px; font-size:13px; color:#6b7280; }
-        label { font-size:13px; font-weight:500; }
-        input {
-          padding:7px 9px;
-          font-family:inherit;
-          font-size:13px;
-          border-radius:10px;
-          border:1px solid #d1d5db;
-          width:100%;
-        }
-        textarea {
-          width:100%;
-          min-height:260px;
-          padding:8px 10px;
-          font-family:inherit;
-          font-size:13px;
-          border-radius:10px;
-          border:1px solid #d1d5db;
-          resize:vertical;
-        }
-        button {
-          padding:8px 14px;
-          border-radius:999px;
-          border:none;
-          background:#00a2ff;
-          color:white;
-          font-weight:500;
-          cursor:pointer;
-        }
-        .secondary {
-          background:#e5e7eb;
-          color:#111827;
-        }
-        .field { margin-bottom:12px; }
-        .label-row {
-          display:flex;
-          justify-content:space-between;
-          align-items:center;
-        }
-        .hint { font-size:11px; color:#6b7280; }
-        .toolbar { margin-bottom: 8px; display:flex; flex-wrap:wrap; gap:4px; }
-        .toolbar button {
-          background:#f3f4f6;
-          color:#111827;
-          border-radius:8px;
-          border:1px solid #d1d5db;
-          padding:4px 8px;
-          font-size:11px;
-        }
-        .layout {
-          display:flex;
-          gap:16px;
-          align-items:flex-start;
-        }
-        .half { flex:1; min-width:0; }
-        #preview {
-          border:1px solid #e5e7eb;
-          padding:10px;
-          border-radius:10px;
-          min-height:260px;
-          background:#fafafa;
-          font-size:13px;
-        }
-        h3 { margin:0 0 6px; font-size:14px; }
-        a { font-size:12px; color:#6b7280; text-decoration:none; }
-        a:hover { text-decoration:underline; }
-        @media (max-width:800px) {
-          .layout { flex-direction:column; }
-        }
-      </style>
-    </head>
-    <body>
-      <div class="shell">
-        <div class="card">
-          <div style="display:flex; justify-content:space-between; align-items:flex-start; gap:8px;">
-            <div>
-              <h1>Edit Log #${log.id}</h1>
-              <p class="sub">Adjust content, associated user, and media.</p>
-            </div>
-            <div style="font-size:12px; color:#6b7280; text-align:right;">
-              <div><a href="/">⬅ Back to logs</a></div>
-            </div>
-          </div>
+      // Determine editor (only admin can edit right now, but we still store it)
+      const editorUsername = getCurrentUser(req) || "admin";
+      const editedAt = new Date().toISOString();
 
-          <form method="POST" action="/edit/${log.id}" enctype="multipart/form-data">
-            <div class="field">
-              <div class="label-row">
-                <label>Username (text, should match an account)</label>
-              </div>
-              <input type="text" name="username" value="${safeUsername}" required />
-            </div>
-
-            <div class="field">
-              <div class="label-row"><label>Date</label></div>
-              <input type="date" name="date" value="${safeDate}" required />
-            </div>
-
-            <div class="field">
-              <div class="label-row"><label>Hours Worked</label></div>
-              <input type="number" step="0.1" name="hours" value="${log.hours}" required />
-            </div>
-
-            <div class="field">
-              <div class="label-row"><label>Image URL (optional)</label></div>
-              <input type="url" name="image_url" value="${safeImageUrl}" />
-            </div>
-
-            <div class="field">
-              <div class="label-row">
-                <label>Upload Image/Video (optional, replaces existing upload)</label>
-                <span class="hint">Upload to overwrite any currently attached media.</span>
-              </div>
-              <input type="file" name="media" accept="image/*,video/*" />
-              ${currentMediaHtml}
-            </div>
-
-            <div class="field">
-              <div class="label-row">
-                <label>Log (Markdown, with paste-images)</label>
-                <span class="hint">Paste images directly; use "Resize Img" to adjust width.</span>
-              </div>
-
-              <div class="toolbar">
-                <button type="button" onclick="applyWrap('**','**')"><b>B</b></button>
-                <button type="button" onclick="applyWrap('*','*')"><i>I</i></button>
-                <button type="button" onclick="applyPrefix('## ')">H2</button>
-                <button type="button" onclick="applyPrefix('- ')">• List</button>
-                <button type="button" onclick="applyWrap('\`','\`')">Code</button>
-                <button type="button" onclick="insertLink()">Link</button>
-                <button type="button" onclick="insertImage()">Image URL</button>
-                <button type="button" onclick="resizeImage()">Resize Img</button>
-              </div>
-
-              <div class="layout">
-                <div class="half">
-                  <h3>Editor</h3>
-                  <textarea id="content" name="content">${safeContent}</textarea>
-                </div>
-                <div class="half">
-                  <h3>Live Preview</h3>
-                  <div id="preview"></div>
-                </div>
-              </div>
-            </div>
-
-            <div style="margin-top:14px; display:flex; gap:10px; align-items:center;">
-              <button type="submit">Update Log</button>
-              <a href="/" class="secondary">Cancel</a>
-            </div>
-          </form>
-        </div>
-      </div>
-
-      <script>
-        const textarea = document.getElementById("content");
-        const preview = document.getElementById("preview");
-
-        function updatePreview() {
-          const text = textarea.value || "Start typing to see a preview...";
-          preview.innerHTML = marked.parse(text);
-        }
-
-        textarea.addEventListener("input", updatePreview);
-        updatePreview();
-
-        textarea.addEventListener("paste", async (event) => {
-          const items = event.clipboardData?.items || [];
-          for (const item of items) {
-            if (item.type && item.type.startsWith("image/")) {
-              event.preventDefault();
-              const file = item.getAsFile();
-              if (!file) return;
-              const formData = new FormData();
-              formData.append("file", file);
-              try {
-                const res = await fetch("/upload-inline", {
-                  method: "POST",
-                  body: formData
-                });
-                const data = await res.json();
-                if (!data.url) return;
-                const before = textarea.value.slice(0, textarea.selectionStart);
-                const after = textarea.value.slice(textarea.selectionEnd);
-                const insertion = "\\n<img src=\\"" + data.url + "\\" style=\\"max-width:100%; width:400px;\\" />\\n";
-                const nextPos = before.length + insertion.length;
-                textarea.value = before + insertion + after;
-                textarea.selectionStart = textarea.selectionEnd = nextPos;
-                updatePreview();
-              } catch (e) {
-                alert("Failed to upload pasted image.");
-              }
-              return;
-            }
-          }
-        });
-
-        function applyWrap(before, after) {
-          const start = textarea.selectionStart;
-          const end = textarea.selectionEnd;
-          const value = textarea.value;
-          const selected = value.slice(start, end) || "text";
-          const replacement = before + selected + after;
-
-          textarea.setRangeText(replacement, start, end, "end");
-          textarea.focus();
-          updatePreview();
-        }
-
-        function applyPrefix(prefix) {
-          const start = textarea.selectionStart;
-          const end = textarea.selectionEnd;
-          const value = textarea.value;
-
-          const before = value.slice(0, start);
-          const selected = value.slice(start, end) || "text";
-          const after = value.slice(end);
-
-          const lines = selected.split("\\n").map(line => prefix + line);
-          const replacement = lines.join("\\n");
-
-          textarea.value = before + replacement + after;
-          const cursorPos = before.length + replacement.length;
-          textarea.selectionStart = textarea.selectionEnd = cursorPos;
-          textarea.focus();
-          updatePreview();
-        }
-
-        function insertLink() {
-          const url = prompt("Enter URL:", "https://");
-          if (!url) return;
-
-          const start = textarea.selectionStart;
-          const end = textarea.selectionEnd;
-          const value = textarea.value;
-          const selected = value.slice(start, end) || "link text";
-
-          const replacement = "[" + selected + "](" + url + ")";
-
-          textarea.setRangeText(replacement, start, end, "end");
-          textarea.focus();
-          updatePreview();
-        }
-
-        function insertImage() {
-          const url = prompt("Enter image URL:", "https://");
-          if (!url) return;
-
-          const alt = prompt("Alt text (optional):", "") || "image";
-
-          const start = textarea.selectionStart;
-          const end = textarea.selectionEnd;
-
-          const replacement = "![" + alt + "](" + url + ")";
-
-          textarea.setRangeText(replacement, start, end, "end");
-          textarea.focus();
-          updatePreview();
-        }
-
-        function resizeImage() {
-          const width = prompt("Image width in px (e.g. 400):", "400");
-          if (!width) return;
-          const start = textarea.selectionStart;
-          const end = textarea.selectionEnd;
-          const value = textarea.value;
-          let selected = value.slice(start, end);
-
-          if (!selected) {
-            alert("Select an <img> tag or image URL to resize.");
-            return;
+      // Insert the old state into log_history
+      db.run(
+        `INSERT INTO log_history (
+          log_id,
+          edited_at,
+          editor_username,
+          old_date,
+          old_hours,
+          old_content,
+          old_image_url,
+          old_media_path,
+          old_media_type,
+          old_username
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          editedAt,
+          editorUsername,
+          currentLog.date || null,
+          currentLog.hours || null,
+          currentLog.content || null,
+          currentLog.image_url || null,
+          currentLog.media_path || null,
+          currentLog.media_type || null,
+          currentLog.username || null
+        ],
+        (histErr) => {
+          if (histErr) {
+            console.error("Failed to insert log_history:", histErr);
+            // We still proceed with the update, but we log the error.
           }
 
-          if (!selected.includes("<img")) {
-            const url = selected.trim();
-            selected = '<img src="' + url + '" style="max-width:100%; width:' + width + 'px;" />';
-          } else {
-            if (selected.includes("style=")) {
-              selected = selected.replace(/width:\\s*[^;"]+/i, 'width:' + width + 'px');
+          // Now handle the new media / updated fields as before
+          let mediaPath = currentLog.media_path;
+          let mediaType = currentLog.media_type;
+
+          if (req.file) {
+            mediaPath = "/uploads/" + req.file.filename;
+            if (req.file.mimetype && req.file.mimetype.startsWith("video/")) {
+              mediaType = "video";
             } else {
-              selected = selected.replace(
-                "<img",
-                '<img style="max-width:100%; width:' + width + 'px;"'
-              );
+              mediaType = "image";
             }
           }
 
-          textarea.setRangeText(selected, start, end, "end");
-          textarea.focus();
-          updatePreview();
+          db.run(
+            "UPDATE logs SET date = ?, hours = ?, content = ?, image_url = ?, media_path = ?, media_type = ?, username = ? WHERE id = ?",
+            [
+              date,
+              hours,
+              content,
+              image_url || null,
+              mediaPath,
+              mediaType,
+              username || null,
+              id
+            ],
+            () => res.redirect("/")
+          );
         }
-      </script>
-    </body>
-    </html>
-    `);
-  });
+      );
+    }
+  );
 });
+
+
 
 // ---------- Create new log ----------
 app.post("/new", upload.single("media"), (req, res) => {
@@ -2609,16 +3215,76 @@ app.post("/edit/:id", upload.single("media"), (req, res) => {
   );
 });
 
-// ---------- Delete log (admin only) ----------
+
+// ---------- Soft delete log (admin only, with legal hold + audit) ----------
 app.post("/delete/:id", (req, res) => {
   if (!isAdmin(req)) {
-    res.status(403).send("Forbidden");
-    return;
+    return res.status(403).send("Forbidden");
   }
 
   const id = req.params.id;
-  db.run("DELETE FROM logs WHERE id = ?", [id], () => res.redirect("/"));
+
+  // 1) Check legal hold flag
+  getSetting("legal_hold", (err, val) => {
+    if (err) {
+      console.error("Error reading legal_hold setting:", err);
+      return res
+        .status(500)
+        .send("Error reading legal hold setting. Deletion blocked.");
+    }
+
+    if (val === "1") {
+      // Legal hold active → block deletion
+      return res
+        .status(403)
+        .send(
+          "Deletion is currently disabled because a legal hold is active. " +
+            '<a href="/">Back</a>'
+        );
+    }
+
+    // 2) Load the log to record a deletion entry
+    db.get("SELECT * FROM logs WHERE id = ?", [id], (selErr, log) => {
+      if (selErr || !log) {
+        return res.status(404).send("Log not found.");
+      }
+
+      const deletedAt = new Date().toISOString();
+      const deletedBy = getCurrentUser(req) || "admin";
+
+      // If you later add a textarea for reason, pick it up here:
+      const reason = (req.body.reason || "").trim() || null;
+
+      // 3) Record deletion in audit table
+      db.run(
+        "INSERT INTO log_deletions (log_id, deleted_at, deleted_by, reason) VALUES (?, ?, ?, ?)",
+        [id, deletedAt, deletedBy, reason],
+        (histErr) => {
+          if (histErr) {
+            console.error("Failed to insert log_deletions:", histErr);
+            // Still continue; don't break the UX
+          }
+
+          // 4) Soft delete the log (keep it in DB, mark as deleted)
+          db.run(
+            "UPDATE logs SET deleted = 1, deleted_at = ?, deleted_by = ?, delete_reason = ? WHERE id = ?",
+            [deletedAt, deletedBy, reason, id],
+            (updErr) => {
+              if (updErr) {
+                console.error("Soft delete update failed:", updErr);
+                return res
+                  .status(500)
+                  .send("Error deleting log. It may still exist.");
+              }
+              res.redirect("/");
+            }
+          );
+        }
+      );
+    });
+  });
 });
+
 
 // ---------- Admin: missed hours per day ----------
 app.get("/admin/missed", (req, res) => {
