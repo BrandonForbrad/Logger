@@ -22,7 +22,7 @@ Run:
 npm install
 ```
 
-**Test if server is running: **
+**Test if server is running:**
 Run:
 ```
 node server.js
@@ -32,7 +32,7 @@ Go to:
 http://YOUR_SERVER_IP:3000
 ```
 
-** Setup to your domain with NGINX: **
+** Setup to your domain with NGINX:**
 
 Install Nginx:
 ```
