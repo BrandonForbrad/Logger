@@ -2791,12 +2791,12 @@ app.get("/admin/backups", (req, res) => {
   }
 
   const backupsHtml =
-    backupFiles
-      .map((b) => {
-        const sizeHuman = formatBytes(b.size);
-        const dateStr = b.mtime.toISOString().replace("T", " ").split(".")[0];
-        const encoded = encodeURIComponent(b.name);
-        return `
+  backupFiles
+    .map((b) => {
+      const sizeHuman = formatBytes(b.size);
+      const dateStr = b.mtime.toISOString().replace("T", " ").split(".")[0];
+      const encoded = encodeURIComponent(b.name);
+      return `
           <tr>
             <td>${escapeHtml(b.name)}</td>
             <td>${escapeHtml(dateStr)}</td>
@@ -2809,10 +2809,16 @@ app.get("/admin/backups", (req, res) => {
                 <button type="submit">Restore</button>
               </form>
             </td>
+            <td>
+              <form method="POST" action="/admin/backups/delete/${encoded}" onsubmit="return confirm('Delete this backup file? This cannot be undone.');">
+                <button type="submit" style="background:#e11d48; border-radius:999px; border:none; color:white; padding:4px 10px; font-size:12px; cursor:pointer;">Delete</button>
+              </form>
+            </td>
           </tr>
         `;
-      })
-      .join("") || '<tr><td colspan="5">No backups yet.</td></tr>';
+    })
+    .join("") || '<tr><td colspan="6">No backups yet.</td></tr>';
+
 
   const dbSize = fs.existsSync(DB_PATH) ? fs.statSync(DB_PATH).size : 0;
   const uploadsSize = getDirectorySize(uploadDir);
@@ -2930,6 +2936,7 @@ app.get("/admin/backups", (req, res) => {
                 <th>Size</th>
                 <th>Download</th>
                 <th>Restore</th>
+                <th>Delete</th>
               </tr>
             </thead>
             <tbody>
@@ -3035,6 +3042,33 @@ app.post("/admin/backups/restore/:file", (req, res) => {
       }
     });
   }, 200);
+});
+app.post("/admin/backups/delete/:file", (req, res) => {
+  if (!isAdmin(req)) {
+    return res.status(403).send("Forbidden");
+  }
+
+  const name = path.basename(req.params.file); // prevent path traversal
+  const full = path.join(backupsDir, name);
+
+  if (!fs.existsSync(full)) {
+    return res.status(404).send("Backup not found");
+  }
+
+  fs.unlink(full, (err) => {
+    if (err) {
+      console.error("Error deleting backup:", err);
+      return res
+        .status(500)
+        .send(
+          "Error deleting backup: " +
+            escapeHtml(String(err)) +
+            ' <a href="/admin/backups">Back</a>'
+        );
+    }
+
+    res.redirect("/admin/backups");
+  });
 });
 
 app.post("/admin/backups/restore-upload", upload.single("backupFile"), (req, res) => {
