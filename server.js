@@ -933,8 +933,12 @@ app.get("/", (req, res) => {
   }
 
   const userFilter = req.query.user || "";
+  const period = req.query.period || ""; // "", "day", "week", "month", "year"
+  const dateRef = req.query.date || "";  // "YYYY-MM-DD" anchor date (optional)
+
   const currentUser = getCurrentUser(req);
   const admin = isAdmin(req);
+
 
   // Require login (user or admin) to see anything
   if (!currentUser && !admin) {
@@ -952,7 +956,45 @@ app.get("/", (req, res) => {
       res.status(500).send("DB error");
       return;
     }
+ // ----- Date range filtering (day / week / month / year) -----
+  let rangeStart = null;
+  let rangeEnd = null;
 
+  if (period && dateRef) {
+    const base = new Date(dateRef);
+    if (!isNaN(base.getTime())) {
+      const y = base.getFullYear();
+      const m = base.getMonth(); // 0-11
+      const d = base.getDate();
+
+      if (period === "day") {
+        const start = new Date(y, m, d);
+        const end = new Date(y, m, d);
+        rangeStart = start.toISOString().split("T")[0];
+        rangeEnd = end.toISOString().split("T")[0];
+      } else if (period === "week") {
+        // Week: Monday–Sunday containing the chosen date
+        const dayOfWeek = base.getDay(); // 0=Sun,1=Mon,...6=Sat
+        const offsetToMonday = (dayOfWeek + 6) % 7; // 0 if Mon, 1 if Tue, ..., 6 if Sun
+        const start = new Date(base);
+        start.setDate(base.getDate() - offsetToMonday);
+        const end = new Date(start);
+        end.setDate(start.getDate() + 6);
+        rangeStart = start.toISOString().split("T")[0];
+        rangeEnd = end.toISOString().split("T")[0];
+      } else if (period === "month") {
+        const start = new Date(y, m, 1);
+        const end = new Date(y, m + 1, 0); // last day of month
+        rangeStart = start.toISOString().split("T")[0];
+        rangeEnd = end.toISOString().split("T")[0];
+      } else if (period === "year") {
+        const start = new Date(y, 0, 1);
+        const end = new Date(y, 11, 31);
+        rangeStart = start.toISOString().split("T")[0];
+        rangeEnd = end.toISOString().split("T")[0];
+      }
+    }
+  }
     // Per-user total hours (overall)
     const perUserTotals = {};
     rows.forEach((r) => {
@@ -962,15 +1004,26 @@ app.get("/", (req, res) => {
     });
 
     // Collect list of usernames for filter dropdown
+      // Collect list of usernames for filter dropdown
     const usernames = Array.from(
       new Set(rows.map((r) => r.username).filter(Boolean))
     ).sort((a, b) => a.localeCompare(b));
 
-    // Apply filter if selected
+    // Apply filters (user + period/date)
     let filteredRows = rows;
+
     if (userFilter) {
-      filteredRows = rows.filter((r) => r.username === userFilter);
+      filteredRows = filteredRows.filter((r) => r.username === userFilter);
     }
+
+    if (rangeStart && rangeEnd) {
+      filteredRows = filteredRows.filter((r) => {
+        if (!r.date) return false;
+        // Dates stored as "YYYY-MM-DD", so string comparison works
+        return r.date >= rangeStart && r.date <= rangeEnd;
+      });
+    }
+
 
     // Group logs by date
     const grouped = {};
@@ -1092,9 +1145,11 @@ app.get("/", (req, res) => {
       })
       .join("");
 
-    const filterFormHtml = `
+       const filterFormHtml = `
       <form method="GET" action="/" class="filter-bar">
-        <label for="userFilter" class="filter-label">Filter by user (with totals):</label>
+        <label for="userFilter" class="filter-label">Filter:</label>
+
+        <!-- User filter -->
         <select id="userFilter" name="user" class="filter-select" onchange="this.form.submit()">
           <option value="">All users</option>
           ${usernames
@@ -1108,13 +1163,39 @@ app.get("/", (req, res) => {
             })
             .join("")}
         </select>
+
+        <!-- Period filter -->
+        <select name="period" class="filter-select" onchange="this.form.submit()">
+          <option value="">All time</option>
+          <option value="day"${period === "day" ? " selected" : ""}>Day</option>
+          <option value="week"${period === "week" ? " selected" : ""}>Week</option>
+          <option value="month"${period === "month" ? " selected" : ""}>Month</option>
+          <option value="year"${period === "year" ? " selected" : ""}>Year</option>
+        </select>
+
+        <!-- Anchor date -->
+        <input
+          type="date"
+          name="date"
+          value="${escapeHtml(dateRef || "")}"
+          class="filter-select"
+          onchange="this.form.submit()"
+        />
+
         ${
-          userFilter
+          userFilter || period || dateRef
             ? `<a href="/" class="filter-clear">Clear</a>`
             : ""
         }
       </form>
     `;
+
+    let activeRangeSummary = "";
+    if (rangeStart && rangeEnd) {
+      activeRangeSummary = `<p class="sub" style="margin-bottom:8px;">Showing logs from <strong>${escapeHtml(
+        rangeStart
+      )}</strong> to <strong>${escapeHtml(rangeEnd)}</strong>.</p>`;
+    }
 
     const html = `
     <!DOCTYPE html>
