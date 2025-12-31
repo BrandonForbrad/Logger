@@ -939,7 +939,6 @@ app.get("/", (req, res) => {
   const currentUser = getCurrentUser(req);
   const admin = isAdmin(req);
 
-
   // Require login (user or admin) to see anything
   if (!currentUser && !admin) {
     res.redirect("/login");
@@ -947,639 +946,664 @@ app.get("/", (req, res) => {
   }
 
   db.all(
-  `SELECT l.*,
-          EXISTS(SELECT 1 FROM log_history h WHERE h.log_id = l.id) AS has_history
-   FROM logs l
-   ORDER BY l.date DESC, l.id DESC`,
-  (err, rows) => {
-    if (err) {
-      res.status(500).send("DB error");
-      return;
-    }
- // ----- Date range filtering (day / week / month / year) -----
-  let rangeStart = null;
-  let rangeEnd = null;
-
-  if (period && dateRef) {
-    const base = new Date(dateRef);
-    if (!isNaN(base.getTime())) {
-      const y = base.getFullYear();
-      const m = base.getMonth(); // 0-11
-      const d = base.getDate();
-
-      if (period === "day") {
-        const start = new Date(y, m, d);
-        const end = new Date(y, m, d);
-        rangeStart = start.toISOString().split("T")[0];
-        rangeEnd = end.toISOString().split("T")[0];
-      } else if (period === "week") {
-        // Week: Monday–Sunday containing the chosen date
-        const dayOfWeek = base.getDay(); // 0=Sun,1=Mon,...6=Sat
-        const offsetToMonday = (dayOfWeek + 6) % 7; // 0 if Mon, 1 if Tue, ..., 6 if Sun
-        const start = new Date(base);
-        start.setDate(base.getDate() - offsetToMonday);
-        const end = new Date(start);
-        end.setDate(start.getDate() + 6);
-        rangeStart = start.toISOString().split("T")[0];
-        rangeEnd = end.toISOString().split("T")[0];
-      } else if (period === "month") {
-        const start = new Date(y, m, 1);
-        const end = new Date(y, m + 1, 0); // last day of month
-        rangeStart = start.toISOString().split("T")[0];
-        rangeEnd = end.toISOString().split("T")[0];
-      } else if (period === "year") {
-        const start = new Date(y, 0, 1);
-        const end = new Date(y, 11, 31);
-        rangeStart = start.toISOString().split("T")[0];
-        rangeEnd = end.toISOString().split("T")[0];
+    `SELECT l.*,
+            EXISTS(SELECT 1 FROM log_history h WHERE h.log_id = l.id) AS has_history
+     FROM logs l
+     ORDER BY l.date DESC, l.id DESC`,
+    (err, rows) => {
+      if (err) {
+        res.status(500).send("DB error");
+        return;
       }
-    }
-  }
-    // Per-user total hours (overall)
-    const perUserTotals = {};
-    rows.forEach((r) => {
-      if (!r.username) return;
-      const h = Number(r.hours) || 0;
-      perUserTotals[r.username] = (perUserTotals[r.username] || 0) + h;
-    });
 
-    // Collect list of usernames for filter dropdown
-      // Collect list of usernames for filter dropdown
-    const usernames = Array.from(
-      new Set(rows.map((r) => r.username).filter(Boolean))
-    ).sort((a, b) => a.localeCompare(b));
+      // ----- Date range filtering (day / week / month / year) -----
+      let rangeStart = null;
+      let rangeEnd = null;
 
-    // Apply filters (user + period/date)
-    let filteredRows = rows;
+      if (period && dateRef) {
+        const base = new Date(dateRef);
+        if (!isNaN(base.getTime())) {
+          const y = base.getFullYear();
+          const m = base.getMonth(); // 0-11
+          const d = base.getDate();
 
-    if (userFilter) {
-      filteredRows = filteredRows.filter((r) => r.username === userFilter);
-    }
-
-    if (rangeStart && rangeEnd) {
-      filteredRows = filteredRows.filter((r) => {
-        if (!r.date) return false;
-        // Dates stored as "YYYY-MM-DD", so string comparison works
-        return r.date >= rangeStart && r.date <= rangeEnd;
-      });
-    }
-
-
-    // Group logs by date
-    const grouped = {};
-    filteredRows.forEach((log) => {
-      const key = log.date || "No Date";
-      if (!grouped[key]) grouped[key] = [];
-      grouped[key].push(log);
-    });
-
-    const dates = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
-
-    const contentHtml = dates
-      .map((date) => {
-        const logs = grouped[date];
-
-        const totalHours = logs.reduce(
-          (sum, log) => sum + (Number(log.hours) || 0),
-          0
-        );
-        const countEntries = logs.length;
-
-        const logsHtml = logs
-          .map((log) => {
-            let mediaHtml = "";
-
-            if (log.media_path) {
-              const safePath = escapeHtml(log.media_path);
-              if (log.media_type === "video") {
-                mediaHtml = `
-                  <div class="media">
-                    <video controls class="media-element">
-                      <source src="${safePath}">
-                      Your browser does not support the video tag.
-                    </video>
-                  </div>
-                `;
-              } else {
-                mediaHtml = `
-                  <div class="media">
-                    <img src="${safePath}" class="media-element" alt="Log media">
-                  </div>
-                `;
-              }
-            } else if (log.image_url) {
-              mediaHtml = `
-                <div class="media">
-                  <img src="${escapeHtml(
-                    log.image_url
-                  )}" class="media-element" alt="Log image">
-                </div>
-              `;
-            }
-            
-            const adminActions = admin
-            ? `
-            <div class="admin-actions">
-                <a href="/edit/${log.id}" class="pill-button pill-button-ghost">Edit</a>
-                <form method="POST" action="/delete/${log.id}" style="display:inline;" onsubmit="return confirm('Delete this log?');">
-                <button type="submit" class="pill-button pill-button-danger">Delete</button>
-                </form>
-            </div>
-            `
-            : "";
-
-            const usernameLabel = log.username
-              ? `<span class="username-badge">@${escapeHtml(log.username)}</span>`
-              : `<span class="username-badge username-anon">[no user]</span>`;
-
-            const editedBadge = log.has_history
-            ? '<span class="edited-badge">Edited</span>'
-            : "";
-            return `
-              <article class="log-card">
-                <header class="log-header">
-                  <div>
-                    ${usernameLabel}
-                    ${editedBadge}
-                    <div class="hours-row">
-                      <span class="hours-label">Hours</span>
-                      <span class="hours-value">${log.hours}</span>
-                    </div>
-                  </div>
-                  <div class="log-id">#${log.id}</div>
-                </header>
-                <div class="log-body">
-                  ${marked.parse(log.content || "")}
-                  ${mediaHtml}
-                </div>
-                ${adminActions}
-                <div class="log-footer">
-                  ${
-                    log.has_history
-                      ? `<a href="/logs/${log.id}/history" class="history-link">View edit history</a> · `
-                      : ""
-                  }
-                  <span class="dispute-hint">
-                    If you believe this log is incorrect, contact
-                    <code>${CONTACT_EMAIL}</code> or <code>${CONTACT_DISCORD}</code>.
-                  </span>
-                </div>
-
-              </article>
-            `;
-          })
-          .join("");
-
-        return `
-          <section class="day-section">
-            <div class="day-header">
-              <h2 class="day-title">${escapeHtml(date)}</h2>
-              <div class="day-meta">
-                <span>${countEntries} entr${countEntries === 1 ? "y" : "ies"}</span>
-                <span>${totalHours.toFixed(2)} total hours</span>
-              </div>
-            </div>
-            ${logsHtml}
-          </section>
-        `;
-      })
-      .join("");
-
-       const filterFormHtml = `
-      <form method="GET" action="/" class="filter-bar">
-        <label for="userFilter" class="filter-label">Filter:</label>
-
-        <!-- User filter -->
-        <select id="userFilter" name="user" class="filter-select" onchange="this.form.submit()">
-          <option value="">All users</option>
-          ${usernames
-            .map((u) => {
-              const safe = escapeHtml(u);
-              const selected = u === userFilter ? " selected" : "";
-              const total = perUserTotals[u] || 0;
-              return `<option value="${safe}"${selected}>${safe} (${total.toFixed(
-                2
-              )}h)</option>`;
-            })
-            .join("")}
-        </select>
-
-        <!-- Period filter -->
-        <select name="period" class="filter-select" onchange="this.form.submit()">
-          <option value="">All time</option>
-          <option value="day"${period === "day" ? " selected" : ""}>Day</option>
-          <option value="week"${period === "week" ? " selected" : ""}>Week</option>
-          <option value="month"${period === "month" ? " selected" : ""}>Month</option>
-          <option value="year"${period === "year" ? " selected" : ""}>Year</option>
-        </select>
-
-        <!-- Anchor date -->
-        <input
-          type="date"
-          name="date"
-          value="${escapeHtml(dateRef || "")}"
-          class="filter-select"
-          onchange="this.form.submit()"
-        />
-
-        ${
-          userFilter || period || dateRef
-            ? `<a href="/" class="filter-clear">Clear</a>`
-            : ""
-        }
-      </form>
-    `;
-
-    let activeRangeSummary = "";
-    if (rangeStart && rangeEnd) {
-      activeRangeSummary = `<p class="sub" style="margin-bottom:8px;">Showing logs from <strong>${escapeHtml(
-        rangeStart
-      )}</strong> to <strong>${escapeHtml(rangeEnd)}</strong>.</p>`;
-    }
-
-    const html = `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <title>Daily Logs</title>
-      <style>
-        .edited-badge {
-          display:inline-flex;
-          align-items:center;
-          padding:2px 6px;
-          margin-left:6px;
-          border-radius:999px;
-          background:#fef3c7;
-          color:#92400e;
-          font-size:10px;
-          font-weight:600;
-          text-transform:uppercase;
-          letter-spacing:0.06em;
-        }
-        .log-footer {
-          margin-top:6px;
-          font-size:11px;
-          color: var(--text-muted);
-        }
-        .history-link {
-          font-size:11px;
-        }
-        .history-link:hover { text-decoration:underline; }
-        .dispute-hint code {
-          font-size:11px;
-        }
-
-        :root {
-          --bg: #f3f4f6;
-          --surface: #ffffff;
-          --surface-alt: #f9fafb;
-          --border: #e5e7eb;
-          --border-strong: #d1d5db;
-          --accent: #00a2ff;
-          --accent-soft: #e0f2ff;
-          --text-main: #111827;
-          --text-muted: #6b7280;
-          --danger: #e11d48;
-          --shadow-soft: 0 10px 25px rgba(15, 23, 42, 0.08);
-          --radius-lg: 16px;
-          --radius-pill: 999px;
-        }
-        * { box-sizing: border-box; }
-        body {
-          margin: 0;
-          font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-          background: radial-gradient(circle at top left, #e5f2ff 0, #f3f4f6 55%, #eef2ff 100%);
-          color: var(--text-main);
-        }
-        a { color: var(--accent); text-decoration: none; }
-        a:hover { text-decoration: underline; }
-
-        .page-shell {
-          min-height: 100vh;
-          display: flex;
-          justify-content: center;
-          padding: 24px 12px;
-        }
-        .page-inner {
-          width: 100%;
-          max-width: 1100px;
-        }
-
-        header.site-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 16px;
-        }
-        .brand {
-          display: flex;
-          align-items: center;
-          gap: 10px;
-        }
-        .brand-logo {
-          width: 32px;
-          height: 32px;
-          border-radius: 999px;
-          background: linear-gradient(135deg, #00a2ff, #6366f1);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          color: white;
-          font-weight: 700;
-          font-size: 18px;
-          box-shadow: 0 8px 18px rgba(59, 130, 246, 0.45);
-        }
-        .brand-title {
-          font-weight: 700;
-          font-size: 20px;
-        }
-        .brand-subtitle {
-          font-size: 12px;
-          color: var(--text-muted);
-        }
-
-        .pill-button {
-          border-radius: var(--radius-pill);
-          border: 1px solid transparent;
-          padding: 6px 14px;
-          font-size: 13px;
-          font-weight: 500;
-          cursor: pointer;
-          background: var(--accent);
-          color: white;
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          box-shadow: 0 3px 8px rgba(0, 162, 255, 0.4);
-        }
-        .pill-button-ghost {
-          background: transparent;
-          color: var(--text-main);
-          border-color: var(--border-strong);
-          box-shadow: none;
-        }
-        .pill-button-danger {
-          background: var(--danger);
-          border-color: var(--danger);
-          color: white;
-          box-shadow: 0 3px 8px rgba(190, 18, 60, 0.4);
-        }
-        .pill-button:hover { filter: brightness(1.05); text-decoration: none; }
-
-        .top-links {
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          font-size: 12px;
-          color: var(--text-muted);
-          justify-content: flex-end;
-        }
-
-        .content-shell {
-          display: grid;
-          grid-template-columns: minmax(0, 3fr) minmax(240px, 1fr);
-          gap: 18px;
-          align-items: flex-start;
-        }
-
-        .main-card {
-          background: rgba(255, 255, 255, 0.9);
-          border-radius: var(--radius-lg);
-          border: 1px solid rgba(209, 213, 219, 0.7);
-          box-shadow: var(--shadow-soft);
-          padding: 18px 20px 24px;
-          backdrop-filter: blur(12px);
-        }
-
-        .sidebar-card {
-          background: rgba(255, 255, 255, 0.8);
-          border-radius: 18px;
-          border: 1px solid rgba(209, 213, 219, 0.8);
-          padding: 16px 16px 18px;
-          box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
-        }
-        .sidebar-heading {
-          font-size: 13px;
-          font-weight: 600;
-          margin-bottom: 8px;
-          text-transform: uppercase;
-          letter-spacing: 0.08em;
-          color: var(--text-muted);
-        }
-        .sidebar-item {
-          font-size: 13px;
-          padding: 6px 0;
-          display: flex;
-          justify-content: space-between;
-          color: var(--text-muted);
-        }
-
-        .filter-bar {
-          display: flex;
-          flex-wrap: wrap;
-          gap: 8px;
-          align-items: center;
-          padding: 10px 12px;
-          border-radius: 999px;
-          background: var(--surface-alt);
-          border: 1px solid var(--border);
-          margin-bottom: 16px;
-        }
-        .filter-label {
-          font-size: 12px;
-          color: var(--text-muted);
-        }
-        .filter-select {
-          border-radius: 999px;
-          border: 1px solid var(--border);
-          padding: 5px 10px;
-          font-size: 13px;
-          background: white;
-        }
-        .filter-clear {
-          font-size: 11px;
-          color: var(--text-muted);
-        }
-
-        .day-section {
-          margin-bottom: 18px;
-        }
-        .day-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: baseline;
-          margin-bottom: 8px;
-        }
-        .day-title {
-          font-size: 15px;
-          font-weight: 600;
-          margin: 0;
-          padding-bottom: 4px;
-          border-bottom: 2px solid var(--border-strong);
-        }
-        .day-meta {
-          font-size: 11px;
-          color: var(--text-muted);
-          display: flex;
-          gap: 12px;
-        }
-
-        .log-card {
-          border-radius: 12px;
-          border: 1px solid var(--border);
-          background: var(--surface-alt);
-          padding: 10px 12px;
-          margin-bottom: 10px;
-        }
-        .log-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          margin-bottom: 6px;
-        }
-        .hours-row {
-          display: inline-flex;
-          align-items: center;
-          gap: 6px;
-          font-size: 12px;
-          margin-top: 4px;
-        }
-        .hours-label {
-          color: var(--text-muted);
-        }
-        .hours-value {
-          font-weight: 600;
-          color: #16a34a;
-        }
-        .log-id {
-          font-size: 11px;
-          color: var(--text-muted);
-        }
-        .log-body {
-          font-size: 13px;
-          line-height: 1.5;
-        }
-        .log-body h1, .log-body h2, .log-body h3 {
-          margin-top: 10px;
-          margin-bottom: 6px;
-        }
-        .log-body p {
-          margin: 4px 0;
-        }
-        .log-body ul {
-          margin: 4px 0 4px 20px;
-        }
-        .media-element {
-          max-width: 100%;
-          height: auto;
-          border-radius: 8px;
-          margin-top: 8px;
-        }
-
-        .admin-actions {
-          margin-top: 8px;
-          display: flex;
-          gap: 8px;
-        }
-
-        .username-badge {
-          display: inline-flex;
-          align-items: center;
-          gap: 4px;
-          padding: 2px 8px;
-          border-radius: 999px;
-          background: var(--accent-soft);
-          color: #0369a1;
-          font-size: 11px;
-          font-weight: 500;
-        }
-        .username-anon {
-          background: #f3f4f6;
-          color: var(--text-muted);
-        }
-
-        @media (max-width: 840px) {
-          .content-shell {
-            grid-template-columns: minmax(0, 1fr);
+          if (period === "day") {
+            const start = new Date(y, m, d);
+            const end = new Date(y, m, d);
+            rangeStart = start.toISOString().split("T")[0];
+            rangeEnd = end.toISOString().split("T")[0];
+          } else if (period === "week") {
+            // Week: Monday–Sunday containing the chosen date
+            const dayOfWeek = base.getDay(); // 0=Sun,1=Mon,...6=Sat
+            const offsetToMonday = (dayOfWeek + 6) % 7; // 0 if Mon, 1 if Tue, ..., 6 if Sun
+            const start = new Date(base);
+            start.setDate(base.getDate() - offsetToMonday);
+            const end = new Date(start);
+            end.setDate(start.getDate() + 6);
+            rangeStart = start.toISOString().split("T")[0];
+            rangeEnd = end.toISOString().split("T")[0];
+          } else if (period === "month") {
+            const start = new Date(y, m, 1);
+            const end = new Date(y, m + 1, 0); // last day of month
+            rangeStart = start.toISOString().split("T")[0];
+            rangeEnd = end.toISOString().split("T")[0];
+          } else if (period === "year") {
+            const start = new Date(y, 0, 1);
+            const end = new Date(y, 11, 31);
+            rangeStart = start.toISOString().split("T")[0];
+            rangeEnd = end.toISOString().split("T")[0];
           }
         }
-      </style>
-    </head>
-    <body>
-      <div class="page-shell">
-        <div class="page-inner">
-          <header class="site-header">
-            <div class="brand">
-              <div class="brand-logo">DL</div>
-              <div>
-                <div class="brand-title">Daily Logger</div>
-                <div class="brand-subtitle">Internal dev-style worklog</div>
-              </div>
-            </div>
-            <div class="top-links">
-              ${
-                currentUser
-                  ? `<span>User: @${escapeHtml(
-                      currentUser
-                    )}</span> <a href="/logout" class="pill-button pill-button-ghost">User Logout</a>`
-                  : `<a href="/login" class="pill-button pill-button-ghost">User Login</a>`
-              }
-             <a href="/policy" class="pill-button pill-button-ghost">Timekeeping Policy</a>
+      }
 
-             ${
-                admin
+      // ----- Rows limited by DATE ONLY (used for dropdown totals) -----
+      let rowsInRange = rows;
+      if (rangeStart && rangeEnd) {
+        rowsInRange = rows.filter((r) => {
+          if (!r.date) return false;
+          // Dates stored as "YYYY-MM-DD", so string comparison works
+          return r.date >= rangeStart && r.date <= rangeEnd;
+        });
+      }
+
+      // Per-user total hours within the *date range* (for dropdown labels)
+      const perUserTotalsForDropdown = {};
+      rowsInRange.forEach((r) => {
+        if (!r.username) return;
+        const h = Number(r.hours) || 0;
+        perUserTotalsForDropdown[r.username] =
+          (perUserTotalsForDropdown[r.username] || 0) + h;
+      });
+
+      // All usernames (in date range) for dropdown
+      const allUsernames = Object.keys(perUserTotalsForDropdown)
+        .sort((a, b) => a.localeCompare(b));
+
+      // ----- Apply USER filter on top of date filter for the actual list -----
+      let filteredRows = rowsInRange;
+      if (userFilter) {
+        filteredRows = filteredRows.filter((r) => r.username === userFilter);
+      }
+
+      // Per-user totals for *current filter* (date + user) → sidebar
+      const perUserTotalsFiltered = {};
+      filteredRows.forEach((r) => {
+        if (!r.username) return;
+        const h = Number(r.hours) || 0;
+        perUserTotalsFiltered[r.username] =
+          (perUserTotalsFiltered[r.username] || 0) + h;
+      });
+
+      const filteredUsernames = Object.keys(perUserTotalsFiltered)
+        .sort((a, b) => a.localeCompare(b));
+
+      // Overall total hours for *current filter*
+      const overallHoursFiltered = filteredRows.reduce(
+        (sum, r) => sum + (Number(r.hours) || 0),
+        0
+      );
+
+      // Group logs by date
+      const grouped = {};
+      filteredRows.forEach((log) => {
+        const key = log.date || "No Date";
+        if (!grouped[key]) grouped[key] = [];
+        grouped[key].push(log);
+      });
+
+      const dates = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
+
+      const contentHtml = dates
+        .map((date) => {
+          const logs = grouped[date];
+
+          const totalHours = logs.reduce(
+            (sum, log) => sum + (Number(log.hours) || 0),
+            0
+          );
+          const countEntries = logs.length;
+
+          const logsHtml = logs
+            .map((log) => {
+              let mediaHtml = "";
+
+              if (log.media_path) {
+                const safePath = escapeHtml(log.media_path);
+                if (log.media_type === "video") {
+                  mediaHtml = `
+                    <div class="media">
+                      <video controls class="media-element">
+                        <source src="${safePath}">
+                        Your browser does not support the video tag.
+                      </video>
+                    </div>
+                  `;
+                } else {
+                  mediaHtml = `
+                    <div class="media">
+                      <img src="${safePath}" class="media-element" alt="Log media">
+                    </div>
+                  `;
+                }
+              } else if (log.image_url) {
+                mediaHtml = `
+                  <div class="media">
+                    <img src="${escapeHtml(
+                      log.image_url
+                    )}" class="media-element" alt="Log image">
+                  </div>
+                `;
+              }
+
+              const adminActions = admin
+                ? `
+              <div class="admin-actions">
+                  <a href="/edit/${log.id}" class="pill-button pill-button-ghost">Edit</a>
+                  <form method="POST" action="/delete/${log.id}" style="display:inline;" onsubmit="return confirm('Delete this log?');">
+                    <button type="submit" class="pill-button pill-button-danger">Delete</button>
+                  </form>
+              </div>
+              `
+                : "";
+
+              const usernameLabel = log.username
+                ? `<span class="username-badge">@${escapeHtml(log.username)}</span>`
+                : `<span class="username-badge username-anon">[no user]</span>`;
+
+              const editedBadge = log.has_history
+                ? '<span class="edited-badge">Edited</span>'
+                : "";
+
+              return `
+                <article class="log-card">
+                  <header class="log-header">
+                    <div>
+                      ${usernameLabel}
+                      ${editedBadge}
+                      <div class="hours-row">
+                        <span class="hours-label">Hours</span>
+                        <span class="hours-value">${log.hours}</span>
+                      </div>
+                    </div>
+                    <div class="log-id">#${log.id}</div>
+                  </header>
+                  <div class="log-body">
+                    ${marked.parse(log.content || "")}
+                    ${mediaHtml}
+                  </div>
+                  ${adminActions}
+                  <div class="log-footer">
+                    ${
+                      log.has_history
+                        ? `<a href="/logs/${log.id}/history" class="history-link">View edit history</a> · `
+                        : ""
+                    }
+                    <span class="dispute-hint">
+                      If you believe this log is incorrect, contact
+                      <code>${CONTACT_EMAIL}</code> or <code>${CONTACT_DISCORD}</code>.
+                    </span>
+                  </div>
+                </article>
+              `;
+            })
+            .join("");
+
+          return `
+            <section class="day-section">
+              <div class="day-header">
+                <h2 class="day-title">${escapeHtml(date)}</h2>
+                <div class="day-meta">
+                  <span>${countEntries} entr${countEntries === 1 ? "y" : "ies"}</span>
+                  <span>${totalHours.toFixed(2)} total hours</span>
+                </div>
+              </div>
+              ${logsHtml}
+            </section>
+          `;
+        })
+        .join("");
+
+      const filterFormHtml = `
+        <form method="GET" action="/" class="filter-bar">
+          <label for="userFilter" class="filter-label">Filter:</label>
+
+          <!-- User filter -->
+          <select id="userFilter" name="user" class="filter-select" onchange="this.form.submit()">
+            <option value="">All users</option>
+            ${allUsernames
+              .map((u) => {
+                const safe = escapeHtml(u);
+                const selected = u === userFilter ? " selected" : "";
+                const total = perUserTotalsForDropdown[u] || 0;
+                return `<option value="${safe}"${selected}>${safe} (${total.toFixed(
+                  2
+                )}h)</option>`;
+              })
+              .join("")}
+          </select>
+
+          <!-- Period filter -->
+          <select name="period" class="filter-select" onchange="this.form.submit()">
+            <option value="">All time</option>
+            <option value="day"${period === "day" ? " selected" : ""}>Day</option>
+            <option value="week"${period === "week" ? " selected" : ""}>Week</option>
+            <option value="month"${period === "month" ? " selected" : ""}>Month</option>
+            <option value="year"${period === "year" ? " selected" : ""}>Year</option>
+          </select>
+
+          <!-- Anchor date -->
+          <input
+            type="date"
+            name="date"
+            value="${escapeHtml(dateRef || "")}"
+            class="filter-select"
+            onchange="this.form.submit()"
+          />
+
+          ${
+            userFilter || period || dateRef
+              ? `<a href="/" class="filter-clear">Clear</a>`
+              : ""
+          }
+        </form>
+      `;
+
+      let activeRangeSummary = "";
+      if (rangeStart && rangeEnd) {
+        activeRangeSummary = `<p class="sub" style="margin-bottom:8px;">Showing logs from <strong>${escapeHtml(
+          rangeStart
+        )}</strong> to <strong>${escapeHtml(rangeEnd)}</strong>.</p>`;
+      }
+
+      const html = `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <title>Daily Logs</title>
+        <style>
+          .edited-badge {
+            display:inline-flex;
+            align-items:center;
+            padding:2px 6px;
+            margin-left:6px;
+            border-radius:999px;
+            background:#fef3c7;
+            color:#92400e;
+            font-size:10px;
+            font-weight:600;
+            text-transform:uppercase;
+            letter-spacing:0.06em;
+          }
+          .log-footer {
+            margin-top:6px;
+            font-size:11px;
+            color: var(--text-muted);
+          }
+          .history-link {
+            font-size:11px;
+          }
+          .history-link:hover { text-decoration:underline; }
+          .dispute-hint code {
+            font-size:11px;
+          }
+
+          :root {
+            --bg: #f3f4f6;
+            --surface: #ffffff;
+            --surface-alt: #f9fafb;
+            --border: #e5e7eb;
+            --border-strong: #d1d5db;
+            --accent: #00a2ff;
+            --accent-soft: #e0f2ff;
+            --text-main: #111827;
+            --text-muted: #6b7280;
+            --danger: #e11d48;
+            --shadow-soft: 0 10px 25px rgba(15, 23, 42, 0.08);
+            --radius-lg: 16px;
+            --radius-pill: 999px;
+          }
+          * { box-sizing: border-box; }
+          body {
+            margin: 0;
+            font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+            background: radial-gradient(circle at top left, #e5f2ff 0, #f3f4f6 55%, #eef2ff 100%);
+            color: var(--text-main);
+          }
+          a { color: var(--accent); text-decoration: none; }
+          a:hover { text-decoration: underline; }
+
+          .page-shell {
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            padding: 24px 12px;
+          }
+          .page-inner {
+            width: 100%;
+            max-width: 1100px;
+          }
+
+          header.site-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+          }
+          .brand {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+          }
+          .brand-logo {
+            width: 32px;
+            height: 32px;
+            border-radius: 999px;
+            background: linear-gradient(135deg, #00a2ff, #6366f1);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: 700;
+            font-size: 18px;
+            box-shadow: 0 8px 18px rgba(59, 130, 246, 0.45);
+          }
+          .brand-title {
+            font-weight: 700;
+            font-size: 20px;
+          }
+          .brand-subtitle {
+            font-size: 12px;
+            color: var(--text-muted);
+          }
+
+          .pill-button {
+            border-radius: var(--radius-pill);
+            border: 1px solid transparent;
+            padding: 6px 14px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            background: var(--accent);
+            color: white;
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            box-shadow: 0 3px 8px rgba(0, 162, 255, 0.4);
+          }
+          .pill-button-ghost {
+            background: transparent;
+            color: var(--text-main);
+            border-color: var(--border-strong);
+            box-shadow: none;
+          }
+          .pill-button-danger {
+            background: var(--danger);
+            border-color: var(--danger);
+            color: white;
+            box-shadow: 0 3px 8px rgba(190, 18, 60, 0.4);
+          }
+          .pill-button:hover { filter: brightness(1.05); text-decoration: none; }
+
+          .top-links {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 12px;
+            color: var(--text-muted);
+            justify-content: flex-end;
+          }
+
+          .content-shell {
+            display: grid;
+            grid-template-columns: minmax(0, 3fr) minmax(240px, 1fr);
+            gap: 18px;
+            align-items: flex-start;
+          }
+
+          .main-card {
+            background: rgba(255, 255, 255, 0.9);
+            border-radius: var(--radius-lg);
+            border: 1px solid rgba(209, 213, 219, 0.7);
+            box-shadow: var(--shadow-soft);
+            padding: 18px 20px 24px;
+            backdrop-filter: blur(12px);
+          }
+
+          .sidebar-card {
+            background: rgba(255, 255, 255, 0.8);
+            border-radius: 18px;
+            border: 1px solid rgba(209, 213, 219, 0.8);
+            padding: 16px 16px 18px;
+            box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+          }
+          .sidebar-heading {
+            font-size: 13px;
+            font-weight: 600;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            color: var(--text-muted);
+          }
+          .sidebar-item {
+            font-size: 13px;
+            padding: 6px 0;
+            display: flex;
+            justify-content: space-between;
+            color: var(--text-muted);
+          }
+
+          .filter-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            align-items: center;
+            padding: 10px 12px;
+            border-radius: 999px;
+            background: var(--surface-alt);
+            border: 1px solid var(--border);
+            margin-bottom: 16px;
+          }
+          .filter-label {
+            font-size: 12px;
+            color: var(--text-muted);
+          }
+          .filter-select {
+            border-radius: 999px;
+            border: 1px solid var(--border);
+            padding: 5px 10px;
+            font-size: 13px;
+            background: white;
+          }
+          .filter-clear {
+            font-size: 11px;
+            color: var(--text-muted);
+          }
+
+          .day-section {
+            margin-bottom: 18px;
+          }
+          .day-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 8px;
+          }
+          .day-title {
+            font-size: 15px;
+            font-weight: 600;
+            margin: 0;
+            padding-bottom: 4px;
+            border-bottom: 2px solid var(--border-strong);
+          }
+          .day-meta {
+            font-size: 11px;
+            color: var(--text-muted);
+            display: flex;
+            gap: 12px;
+          }
+
+          .log-card {
+            border-radius: 12px;
+            border: 1px solid var(--border);
+            background: var(--surface-alt);
+            padding: 10px 12px;
+            margin-bottom: 10px;
+          }
+          .log-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            margin-bottom: 6px;
+          }
+          .hours-row {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 12px;
+            margin-top: 4px;
+          }
+          .hours-label {
+            color: var(--text-muted);
+          }
+          .hours-value {
+            font-weight: 600;
+            color: #16a34a;
+          }
+          .log-id {
+            font-size: 11px;
+            color: var(--text-muted);
+          }
+          .log-body {
+            font-size: 13px;
+            line-height: 1.5;
+          }
+          .log-body h1, .log-body h2, .log-body h3 {
+            margin-top: 10px;
+            margin-bottom: 6px;
+          }
+          .log-body p {
+            margin: 4px 0;
+          }
+          .log-body ul {
+            margin: 4px 0 4px 20px;
+          }
+          .media-element {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            margin-top: 8px;
+          }
+
+          .admin-actions {
+            margin-top: 8px;
+            display: flex;
+            gap: 8px;
+          }
+
+          .username-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 4px;
+            padding: 2px 8px;
+            border-radius: 999px;
+            background: var(--accent-soft);
+            color: #0369a1;
+            font-size: 11px;
+            font-weight: 500;
+          }
+          .username-anon {
+            background: #f3f4f6;
+            color: var(--text-muted);
+          }
+
+          @media (max-width: 840px) {
+            .content-shell {
+              grid-template-columns: minmax(0, 1fr);
+            }
+          }
+        </style>
+      </head>
+      <body>
+        <div class="page-shell">
+          <div class="page-inner">
+            <header class="site-header">
+              <div class="brand">
+                <div class="brand-logo">DL</div>
+                <div>
+                  <div class="brand-title">Daily Logger</div>
+                  <div class="brand-subtitle">Internal dev-style worklog</div>
+                </div>
+              </div>
+              <div class="top-links">
+                ${
+                  currentUser
+                    ? `<span>User: @${escapeHtml(
+                        currentUser
+                      )}</span> <a href="/logout" class="pill-button pill-button-ghost">User Logout</a>`
+                    : `<a href="/login" class="pill-button pill-button-ghost">User Login</a>`
+                }
+                <a href="/policy" class="pill-button pill-button-ghost">Timekeeping Policy</a>
+                ${
+                  admin
                     ? `
-                    <span>Admin</span>
-                    <a href="/admin/panel" class="pill-button pill-button-ghost">Admin Panel</a>
-                    <a href="/admin/logout" class="pill-button pill-button-ghost">Logout</a>
+                      <span>Admin</span>
+                      <a href="/admin/panel" class="pill-button pill-button-ghost">Admin Panel</a>
+                      <a href="/admin/logout" class="pill-button pill-button-ghost">Logout</a>
                     `
                     : `<a href="/admin" class="pill-button pill-button-ghost">Admin</a>`
                 }
+                <a href="/new" class="pill-button">➕ New Log</a>
+              </div>
+            </header>
 
-              <a href="/new" class="pill-button">➕ New Log</a>
+            <div class="content-shell">
+              <main class="main-card">
+                ${filterFormHtml}
+                ${activeRangeSummary}
+                ${contentHtml}
+              </main>
+
+              <aside class="sidebar-card">
+                <div class="sidebar-heading">Tips</div>
+                <div class="sidebar-item">
+                  <span>Markdown formatting</span>
+                </div>
+                <div class="sidebar-item">
+                  <span>Paste images directly</span>
+                </div>
+                <div class="sidebar-item">
+                  <span>Use headings &amp; lists</span>
+                </div>
+
+                <div class="sidebar-heading" style="margin-top:10px;">Users &amp; Hours</div>
+                <div class="sidebar-item">
+                  <span>Total (current filter)</span>
+                  <span>${overallHoursFiltered.toFixed(1)}h</span>
+                </div>
+                ${
+                  filteredUsernames.length
+                    ? filteredUsernames
+                        .map((u) => {
+                          const total = perUserTotalsFiltered[u] || 0;
+                          return `<div class="sidebar-item"><span>@${escapeHtml(
+                            u
+                          )}</span><span>${total.toFixed(1)}h</span></div>`;
+                        })
+                        .join("")
+                    : '<div class="sidebar-item"><span>No users for this filter</span></div>'
+                }
+              </aside>
             </div>
-          </header>
-
-          <div class="content-shell">
-            <main class="main-card">
-              ${filterFormHtml}
-              ${contentHtml}
-            </main>
-
-            <aside class="sidebar-card">
-              <div class="sidebar-heading">Tips</div>
-              <div class="sidebar-item">
-                <span>Markdown formatting</span>
-              </div>
-              <div class="sidebar-item">
-                <span>Paste images directly</span>
-              </div>
-              <div class="sidebar-item">
-                <span>Use headings &amp; lists</span>
-              </div>
-              <div class="sidebar-heading" style="margin-top:10px;">Users &amp; Hours</div>
-              ${
-                usernames.length
-                  ? usernames
-                      .map((u) => {
-                        const total = perUserTotals[u] || 0;
-                        return `<div class="sidebar-item"><span>@${escapeHtml(
-                          u
-                        )}</span><span>${total.toFixed(1)}h</span></div>`;
-                      })
-                      .join("")
-                  : '<div class="sidebar-item"><span>No users yet</span></div>'
-              }
-            </aside>
           </div>
         </div>
-      </div>
-    </body>
-    </html>
-    `;
-    res.send(html);
-  });
+      </body>
+      </html>
+      `;
+      res.send(html);
+    }
+  );
 });
+
 app.get("/admin/panel", (req, res) => {
   if (!isAdmin(req)) {
     return res.status(403).send("Forbidden");
