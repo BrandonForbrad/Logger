@@ -33,7 +33,6 @@ console.log("Server started");
 const db = new sqlite3.Database(DB_PATH);
 db.get("SELECT value FROM settings WHERE key = 'admin_password_set'", (err, row) => {
   if (err) {
-    // table didn't exist yet → create it now
     db.run("CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT)", () => {
       db.run("INSERT OR IGNORE INTO settings (key,value) VALUES ('admin_password_set','0')");
     });
