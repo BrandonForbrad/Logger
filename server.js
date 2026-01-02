@@ -1264,10 +1264,10 @@ app.get("/", (req, res) => {
                   admin
                     ? `
                       <a href="/pinned/new" class="pill-button pill-button-ghost">📌New Pinned</a>
-                      <a href="/pinned/history" class="pill-button pill-button-ghost">📌History</a>
                     `
                     : ""
                 }
+                 <a href="/pinned/history" class="pill-button pill-button-ghost">📌History</a>
               </form>
             `;
 
