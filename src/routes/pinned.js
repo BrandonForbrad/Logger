@@ -54,19 +54,35 @@ module.exports = function registerPinnedRoutes(app, deps) {
 			return;
 		}
 
-		db.all(
-			"SELECT * FROM pinned_notes ORDER BY created_at DESC, id DESC",
+		const PAGE_SIZE = 50;
+		const requestedPage = Math.max(1, parseInt(req.query.page, 10) || 1);
+
+		db.get(
+			"SELECT COUNT(*) AS totalCount FROM pinned_notes",
 			[],
-			(err, rows) => {
-				if (err) {
+			(countErr, countRow) => {
+				if (countErr) {
 					return res.status(500).send("Error loading pinned notes");
 				}
 
-				const listHtml =
-					rows.length === 0
-						? '<p class="sub">No pinned notes have been created yet.</p>'
-						: rows
-								.map((n) => {
+				const totalCount = (countRow && countRow.totalCount) || 0;
+				const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+				const page = Math.min(requestedPage, totalPages);
+				const offset = (page - 1) * PAGE_SIZE;
+
+				db.all(
+					"SELECT * FROM pinned_notes ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+					[PAGE_SIZE, offset],
+					(err, rows) => {
+						if (err) {
+							return res.status(500).send("Error loading pinned notes");
+						}
+
+						const itemsHtml =
+							rows.length === 0
+								? '<p class="sub">No pinned notes have been created yet.</p>'
+								: rows
+										.map((n) => {
 									const isPinned = !!n.is_pinned;
 									const safeUser = n.username ? escapeHtml(n.username) : "";
 									let safeDate = "";
@@ -127,9 +143,133 @@ module.exports = function registerPinnedRoutes(app, deps) {
 								})
 								.join("");
 
-				res.send(views.pinnedHistoryPage({ listHtml }));
+						let paginationHtml = "";
+						if (totalPages > 1) {
+							const prevHref = page > 1 ? `/pinned/history?page=${page - 1}` : "#";
+							const nextHref = page < totalPages ? `/pinned/history?page=${page + 1}` : "#";
+							paginationHtml = `
+								<div class="pagination">
+									<a class="btn btn-secondary${page <= 1 ? " disabled" : ""}" href="${prevHref}">Prev</a>
+									<span class="page-meta">Page ${page} / ${totalPages}</span>
+									<a class="btn btn-secondary${page >= totalPages ? " disabled" : ""}" href="${nextHref}">Next</a>
+								</div>
+							`;
+						}
+
+						res.send(
+							views.pinnedHistoryPage({
+								itemsHtml,
+								paginationHtml,
+								page,
+								totalPages,
+							})
+						);
+					}
+				);
 			}
 		);
+	});
+
+	// ---------- Pinned history infinite-scroll page loader (JSON) ----------
+	app.get("/pinned/history/page", (req, res) => {
+		const currentUser = getCurrentUser(req);
+		const admin = isAdmin(req);
+		if (!currentUser && !admin) {
+			res.status(401).json({ error: "login_required" });
+			return;
+		}
+
+		const PAGE_SIZE = 50;
+		const requestedPage = Math.max(1, parseInt(req.query.page, 10) || 1);
+
+		db.get("SELECT COUNT(*) AS totalCount FROM pinned_notes", [], (countErr, countRow) => {
+			if (countErr) {
+				console.error("/pinned/history/page count failed:", countErr);
+				res.status(500).json({ error: "db_error" });
+				return;
+			}
+
+			const totalCount = (countRow && countRow.totalCount) || 0;
+			const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+			const page = Math.min(requestedPage, totalPages);
+			const offset = (page - 1) * PAGE_SIZE;
+
+			db.all(
+				"SELECT * FROM pinned_notes ORDER BY created_at DESC, id DESC LIMIT ? OFFSET ?",
+				[PAGE_SIZE, offset],
+				(err, rows) => {
+					if (err) {
+						console.error("/pinned/history/page rows failed:", err);
+						res.status(500).json({ error: "db_error" });
+						return;
+					}
+
+					const itemsHtml =
+						!rows || rows.length === 0
+							? ""
+							: rows
+									.map((n) => {
+										const isPinned = !!n.is_pinned;
+										const safeUser = n.username ? escapeHtml(n.username) : "";
+										let safeDate = "";
+										if (n.created_at) {
+											try {
+												safeDate = escapeHtml(
+													new Date(n.created_at).toLocaleString()
+											);
+											} catch {
+												safeDate = escapeHtml(n.created_at);
+											}
+										}
+										const snippet = escapeHtml(
+											(n.content || "").slice(0, 200) +
+												((n.content || "").length > 200 ? "…" : "")
+										);
+
+										return `
+										<div class="item">
+											<div class="item-header">
+												<div class="item-title">
+													<span class="badge">Pinned Note #${n.id}</span>
+													${
+														isPinned
+															? '<span class="badge badge-current">Currently Pinned</span>'
+															: ""
+													}
+												</div>
+												<div class="meta">
+													${safeUser ? "@" + safeUser : ""}${
+													safeUser && safeDate ? " · " : ""
+												}${safeDate}
+												</div>
+											</div>
+											<div class="snippet">${snippet}</div>
+											<div class="actions">
+												<a href="/pinned/${n.id}" class="btn btn-secondary">Open</a>
+												${
+													admin && !isPinned
+														? `<form method="POST" action="/pinned/${n.id}/repin" style="margin:0;">
+																<button type="submit" class="btn">Repin this note</button>
+															</form>`
+														: ""
+												}
+												${
+													admin
+														? `<form method="POST" action="/pinned/${n.id}/delete" style="margin:0;">
+																<button type="submit" class="btn btn-secondary" onclick="return confirm('Delete this pinned note?');">Delete</button>
+														</form>`
+														: ""
+												}
+											</div>
+										</div>
+									`;
+									})
+									.join("");
+
+					res.json({ itemsHtml, page, totalPages });
+				}
+			);
+		});
 	});
 
 	// ---------- Repin a note (admin only) ----------

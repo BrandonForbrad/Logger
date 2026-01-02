@@ -934,7 +934,7 @@ function pinnedNewPage({ currentUserEscaped }) {
   `;
 }
 
-function pinnedHistoryPage({ listHtml }) {
+function pinnedHistoryPage({ itemsHtml, paginationHtml, page, totalPages }) {
   return `
       <!DOCTYPE html>
       <html>
@@ -1010,6 +1010,23 @@ function pinnedHistoryPage({ listHtml }) {
             background:#e5e7eb;
             color:#111827;
           }
+
+      .pagination {
+      margin-top: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      flex-wrap: wrap;
+      }
+      .page-meta {
+      font-size: 12px;
+      color: #6b7280;
+      }
+      .disabled {
+      pointer-events: none;
+      opacity: 0.55;
+      }
         </style>
       </head>
       <body>
@@ -1021,9 +1038,93 @@ function pinnedHistoryPage({ listHtml }) {
             </div>
             <h1>Pinned Note History</h1>
             <p class="sub">When you create a new pinned note, the previous one is unpinned but kept here. You can repin any older note.</p>
-            ${listHtml}
+      <div
+        id="pinnedStream"
+        data-page="${Number(page) || 1}"
+        data-total-pages="${Number(totalPages) || 1}"
+        data-base-qs=""
+      >
+        ${itemsHtml || ""}
+      </div>
+      <div id="pinnedStreamLoader" class="sub" style="display:none; margin-top:10px;">Loading more pinned notes…</div>
+      ${paginationHtml || ""}
           </div>
         </div>
+    <script>
+      (function () {
+        var stream = document.getElementById("pinnedStream");
+        if (!stream) return;
+        var loader = document.getElementById("pinnedStreamLoader");
+        var pagination = document.querySelector(".pagination");
+        if (pagination) pagination.style.display = "none";
+
+        var currentPage = parseInt(stream.getAttribute("data-page") || "1", 10) || 1;
+        var totalPages = parseInt(stream.getAttribute("data-total-pages") || "1", 10) || 1;
+        var baseQs = stream.getAttribute("data-base-qs") || "";
+        var loading = false;
+        var done = currentPage >= totalPages;
+
+        function buildUrl(nextPage) {
+          var qs = baseQs ? baseQs + "&" : "";
+          return "/pinned/history/page?" + qs + "page=" + encodeURIComponent(String(nextPage));
+        }
+
+        function nearBottom() {
+          var scrollY = window.scrollY || window.pageYOffset || 0;
+          var viewportH = window.innerHeight || document.documentElement.clientHeight || 0;
+          var docH = Math.max(
+            document.body.scrollHeight,
+            document.documentElement.scrollHeight
+          );
+          return scrollY + viewportH >= docH - 600;
+        }
+
+        async function loadMore() {
+          if (loading || done) return;
+          loading = true;
+          if (loader) loader.style.display = "block";
+
+          var nextPage = currentPage + 1;
+          try {
+            var res = await fetch(buildUrl(nextPage), {
+              headers: { "Accept": "application/json" },
+              credentials: "same-origin"
+            });
+            if (!res.ok) throw new Error("bad status");
+            var data = await res.json();
+            if (data && typeof data.totalPages === "number") totalPages = data.totalPages;
+            if (!data || !data.itemsHtml) {
+              done = true;
+              return;
+            }
+
+            var tmp = document.createElement("div");
+            tmp.innerHTML = data.itemsHtml;
+            while (tmp.firstChild) stream.appendChild(tmp.firstChild);
+
+            currentPage = data.page || nextPage;
+            stream.setAttribute("data-page", String(currentPage));
+            done = currentPage >= totalPages;
+          } catch (e) {
+            // keep pagination as fallback if fetch fails
+            if (pagination) pagination.style.display = "flex";
+            done = true;
+          } finally {
+            loading = false;
+            if (loader) loader.style.display = "none";
+          }
+        }
+
+        window.addEventListener(
+          "scroll",
+          function () {
+            if (nearBottom()) loadMore();
+          },
+          { passive: true }
+        );
+        if (nearBottom()) loadMore();
+      })();
+    </script>
       </body>
       </html>
       `;

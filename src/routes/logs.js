@@ -173,119 +173,195 @@ function registerLogsReadRoutes(app, deps) {
 				let personalNoteContent = "";
 
 				function proceedWithLogs() {
-					db.all(
-						`SELECT l.*,
-									EXISTS(SELECT 1 FROM log_history h WHERE h.log_id = l.id) AS has_history
-					 FROM logs l
-					 ORDER BY l.date DESC, l.id DESC`,
-						(err, rows) => {
-							if (err) {
-								res.status(500).send("DB error");
-								return;
-							}
+					const dbAllAsync = (sql, params = []) =>
+						new Promise((resolve, reject) => {
+							db.all(sql, params, (err, rows) => {
+								if (err) return reject(err);
+								resolve(rows || []);
+							});
+						});
+					const dbGetAsync = (sql, params = []) =>
+						new Promise((resolve, reject) => {
+							db.get(sql, params, (err, row) => {
+								if (err) return reject(err);
+								resolve(row || null);
+							});
+						});
 
-							// ----- Date range filtering (day / week / month / year) -----
-							let rangeStart = null;
-							let rangeEnd = null;
+					(async () => {
+						// ----- Date range filtering (day / week / month / year) -----
+						let rangeStart = null;
+						let rangeEnd = null;
 
-							if (period && dateRef) {
-								const base = new Date(dateRef);
-								if (!isNaN(base.getTime())) {
-									const y = base.getFullYear();
-									const m = base.getMonth(); // 0-11
-									const d = base.getDate();
+						if (period && dateRef) {
+							const base = new Date(dateRef);
+							if (!isNaN(base.getTime())) {
+								const y = base.getFullYear();
+								const m = base.getMonth();
+								const d = base.getDate();
 
-									if (period === "day") {
-										const start = new Date(y, m, d);
-										const end = new Date(y, m, d);
-										rangeStart = start.toISOString().split("T")[0];
-										rangeEnd = end.toISOString().split("T")[0];
-									} else if (period === "week") {
-										// Week: Monday–Sunday containing the chosen date
-										const dayOfWeek = base.getDay(); // 0=Sun,1=Mon,...6=Sat
-										const offsetToMonday = (dayOfWeek + 6) % 7; // 0 if Mon, 1 if Tue, ..., 6 if Sun
-										const start = new Date(base);
-										start.setDate(base.getDate() - offsetToMonday);
-										const end = new Date(start);
-										end.setDate(start.getDate() + 6);
-										rangeStart = start.toISOString().split("T")[0];
-										rangeEnd = end.toISOString().split("T")[0];
-									} else if (period === "month") {
-										const start = new Date(y, m, 1);
-										const end = new Date(y, m + 1, 0); // last day of month
-										rangeStart = start.toISOString().split("T")[0];
-										rangeEnd = end.toISOString().split("T")[0];
-									} else if (period === "year") {
-										const start = new Date(y, 0, 1);
-										const end = new Date(y, 11, 31);
-										rangeStart = start.toISOString().split("T")[0];
-										rangeEnd = end.toISOString().split("T")[0];
-									}
+								if (period === "day") {
+									const start = new Date(y, m, d);
+									const end = new Date(y, m, d);
+									rangeStart = start.toISOString().split("T")[0];
+									rangeEnd = end.toISOString().split("T")[0];
+								} else if (period === "week") {
+									const dayOfWeek = base.getDay();
+									const offsetToMonday = (dayOfWeek + 6) % 7;
+									const start = new Date(base);
+									start.setDate(base.getDate() - offsetToMonday);
+									const end = new Date(start);
+									end.setDate(start.getDate() + 6);
+									rangeStart = start.toISOString().split("T")[0];
+									rangeEnd = end.toISOString().split("T")[0];
+								} else if (period === "month") {
+									const start = new Date(y, m, 1);
+									const end = new Date(y, m + 1, 0);
+									rangeStart = start.toISOString().split("T")[0];
+									rangeEnd = end.toISOString().split("T")[0];
+								} else if (period === "year") {
+									const start = new Date(y, 0, 1);
+									const end = new Date(y, 11, 31);
+									rangeStart = start.toISOString().split("T")[0];
+									rangeEnd = end.toISOString().split("T")[0];
 								}
 							}
+						}
 
-							// ----- Rows limited by DATE ONLY (used for dropdown totals) -----
-							let rowsInRange = rows;
-							if (rangeStart && rangeEnd) {
-								rowsInRange = rows.filter((r) => {
-									if (!r.date) return false;
-									// Dates stored as "YYYY-MM-DD", so string comparison works
-									return r.date >= rangeStart && r.date <= rangeEnd;
-								});
-							}
+						const PAGE_SIZE = 50;
+						const requestedPage = Math.max(1, parseInt(req.query.page, 10) || 1);
 
-							// Per-user total hours within the *date range* (for dropdown labels)
-							const perUserTotalsForDropdown = {};
-							rowsInRange.forEach((r) => {
-								if (!r.username) return;
-								const h = Number(r.hours) || 0;
-								perUserTotalsForDropdown[r.username] =
-									(perUserTotalsForDropdown[r.username] || 0) + h;
-							});
+						// Dropdown totals are by DATE RANGE only (not user filter)
+						const dropdownWhereParts = ["username IS NOT NULL"];
+						const dropdownParams = [];
+						if (rangeStart && rangeEnd) {
+							dropdownWhereParts.push("date >= ? AND date <= ?");
+							dropdownParams.push(rangeStart, rangeEnd);
+						}
+						const dropdownWhereSql = "WHERE " + dropdownWhereParts.join(" AND ");
 
-							// All usernames (in date range) for dropdown
-							const allUsernames = Object.keys(perUserTotalsForDropdown)
-								.sort((a, b) => a.localeCompare(b));
+						const ddRows = await dbAllAsync(
+							`SELECT username, SUM(COALESCE(hours, 0)) AS totalHours
+							 FROM logs
+							 ${dropdownWhereSql}
+							 GROUP BY username`,
+							dropdownParams
+						);
 
-							// ----- Apply USER filter on top of date filter for the actual list -----
-							let filteredRows = rowsInRange;
-							if (userFilter) {
-								filteredRows = filteredRows.filter(
-									(r) => r.username === userFilter
-								);
-							}
+						const perUserTotalsForDropdown = {};
+						ddRows.forEach((r) => {
+							if (!r || !r.username) return;
+							perUserTotalsForDropdown[r.username] = Number(r.totalHours) || 0;
+						});
+						const allUsernames = Object.keys(perUserTotalsForDropdown).sort((a, b) =>
+							a.localeCompare(b)
+						);
 
-							// Per-user totals for *current filter* (date + user) → sidebar
-							const perUserTotalsFiltered = {};
-							filteredRows.forEach((r) => {
-								if (!r.username) return;
-								const h = Number(r.hours) || 0;
-								perUserTotalsFiltered[r.username] =
-									(perUserTotalsFiltered[r.username] || 0) + h;
-							});
+						// Filters for the actual list and totals (date range + user)
+						const whereParts = [];
+						const whereParams = [];
+						if (rangeStart && rangeEnd) {
+							whereParts.push("l.date >= ? AND l.date <= ?");
+							whereParams.push(rangeStart, rangeEnd);
+						}
+						if (userFilter) {
+							whereParts.push("l.username = ?");
+							whereParams.push(userFilter);
+						}
+						const whereSql = whereParts.length ? "WHERE " + whereParts.join(" AND ") : "";
 
-							const filteredUsernames = Object.keys(perUserTotalsFiltered)
-								.sort((a, b) => a.localeCompare(b));
+						const countRow = await dbGetAsync(
+							`SELECT COUNT(*) AS totalCount, SUM(COALESCE(l.hours, 0)) AS totalHours
+							 FROM logs l
+							 ${whereSql}`,
+							whereParams
+						);
 
-							// Overall total hours for *current filter*
-							const overallHoursFiltered = filteredRows.reduce(
-								(sum, r) => sum + (Number(r.hours) || 0),
-								0
-							);
+						const totalCount = (countRow && countRow.totalCount) || 0;
+						const overallHoursFiltered = (countRow && Number(countRow.totalHours)) || 0;
+						const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+						const page = Math.min(requestedPage, totalPages);
+						const offset = (page - 1) * PAGE_SIZE;
 
-							// Group logs by date
-							const grouped = {};
-							filteredRows.forEach((log) => {
-								const key = log.date || "No Date";
-								if (!grouped[key]) grouped[key] = [];
-								grouped[key].push(log);
-							});
+						const perUserWhereParts = ["l.username IS NOT NULL"];
+						const perUserWhereParams = [];
+						if (rangeStart && rangeEnd) {
+							perUserWhereParts.push("l.date >= ? AND l.date <= ?");
+							perUserWhereParams.push(rangeStart, rangeEnd);
+						}
+						if (userFilter) {
+							perUserWhereParts.push("l.username = ?");
+							perUserWhereParams.push(userFilter);
+						}
+						const perUserWhereSql = "WHERE " + perUserWhereParts.join(" AND ");
 
-							const dates = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
+						const totRows = await dbAllAsync(
+							`SELECT l.username AS username, SUM(COALESCE(l.hours, 0)) AS totalHours
+							 FROM logs l
+							 ${perUserWhereSql}
+							 GROUP BY l.username
+							 ORDER BY l.username`,
+							perUserWhereParams
+						);
 
-							const contentHtml = dates
-								.map((date) => {
-									const logs = grouped[date];
+						const perUserTotalsFiltered = {};
+						totRows.forEach((r) => {
+							if (!r || !r.username) return;
+							perUserTotalsFiltered[r.username] = Number(r.totalHours) || 0;
+						});
+						const filteredUsernames = Object.keys(perUserTotalsFiltered).sort((a, b) =>
+							a.localeCompare(b)
+						);
+
+						const pageRows = await dbAllAsync(
+							`SELECT l.*,
+									EXISTS(SELECT 1 FROM log_history h WHERE h.log_id = l.id) AS has_history
+							 FROM logs l
+							 ${whereSql}
+							 ORDER BY l.date DESC, l.id DESC
+							 LIMIT ? OFFSET ?`,
+							[...whereParams, PAGE_SIZE, offset]
+						);
+
+						// Group logs by date (only this page)
+						const grouped = {};
+						pageRows.forEach((log) => {
+							const key = log.date || "No Date";
+							if (!grouped[key]) grouped[key] = [];
+							grouped[key].push(log);
+						});
+						const dates = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
+
+						const urlParams = new URLSearchParams();
+						if (userFilter) urlParams.set("user", userFilter);
+						if (period) urlParams.set("period", period);
+						if (dateRef) urlParams.set("date", dateRef);
+						const baseQs = urlParams.toString();
+						function pageHref(p) {
+							const qp = new URLSearchParams(baseQs);
+							if (p > 1) qp.set("page", String(p));
+							const qs = qp.toString();
+							return "/" + (qs ? "?" + qs : "");
+						}
+
+						const paginationHtml =
+							totalPages > 1
+								? `
+								<div class="pagination">
+									<a class="page-link${page <= 1 ? " disabled" : ""}" href="${
+										page <= 1 ? "#" : pageHref(page - 1)
+									}">Prev</a>
+									<span class="page-meta">Page ${page} / ${totalPages}</span>
+									<a class="page-link${page >= totalPages ? " disabled" : ""}" href="${
+										page >= totalPages ? "#" : pageHref(page + 1)
+									}">Next</a>
+								</div>
+								`
+								: "";
+
+						const contentHtml = dates
+							.map((date) => {
+								const logs = grouped[date];
 
 									const totalHours = logs.reduce(
 										(sum, log) => sum + (Number(log.hours) || 0),
@@ -302,7 +378,7 @@ function registerLogsReadRoutes(app, deps) {
 												if (log.media_type === "video") {
 													mediaHtml = `
 													<div class="media">
-														<video controls class="media-element">
+																			<video controls preload="metadata" class="media-element">
 															<source src="${safePath}">
 															Your browser does not support the video tag.
 														</video>
@@ -311,16 +387,16 @@ function registerLogsReadRoutes(app, deps) {
 												} else {
 													mediaHtml = `
 													<div class="media">
-														<img src="${safePath}" class="media-element" alt="Log media">
+																			<img src="${safePath}" loading="lazy" class="media-element" alt="Log media">
 													</div>
 												`;
 												}
 											} else if (log.image_url) {
 												mediaHtml = `
 												<div class="media">
-													<img src="${escapeHtml(
+																<img src="${escapeHtml(
 														log.image_url
-													)}" class="media-element" alt="Log image">
+																)}" loading="lazy" class="media-element" alt="Log image">
 												</div>
 											`;
 											}
@@ -378,23 +454,24 @@ function registerLogsReadRoutes(app, deps) {
 										})
 										.join("");
 
-									return `
-									<section class="day-section">
-										<div class="day-header">
-											<h2 class="day-title">${escapeHtml(date)}</h2>
-											<div class="day-meta">
-												<span>${countEntries} entr${countEntries === 1 ? "y" : "ies"}</span>
-												<span>${totalHours.toFixed(2)} total hours</span>
-											</div>
+								return `
+								<section class="day-section" data-day="${escapeHtml(date)}">
+									<div class="day-header">
+										<h2 class="day-title">${escapeHtml(date)}</h2>
+										<div class="day-meta">
+											<span>${countEntries} entr${countEntries === 1 ? "y" : "ies"}</span>
+											<span>${totalHours.toFixed(2)} total hours</span>
 										</div>
-										${logsHtml}
-									</section>
-								`;
+									</div>
+									<div class="day-logs">${logsHtml}</div>
+								</section>
+							`;
 								})
 								.join("");
 
 							const filterFormHtml = `
 							<form method="GET" action="/" class="filter-bar">
+								<input type="hidden" name="page" value="1" />
 								<label for="userFilter" class="filter-label">Filter:</label>
 
 								<!-- User filter -->
@@ -471,7 +548,6 @@ function registerLogsReadRoutes(app, deps) {
 									}
 								}
 								const pinnedBody = marked.parse(pinnedNote.content || "");
-
 								pinnedNoteHtml = `
 								<section class="pinned-note-card">
 									<div class="pinned-note-header">
@@ -955,6 +1031,31 @@ function registerLogsReadRoutes(app, deps) {
 			margin-top: 8px;
 		}
 
+		.pagination {
+			display: flex;
+			align-items: center;
+			justify-content: center;
+			gap: 10px;
+			margin-top: 14px;
+		}
+		.page-link {
+			padding: 6px 12px;
+			border-radius: var(--radius-pill);
+			border: 1px solid var(--border-strong);
+			background: rgba(255, 255, 255, 0.9);
+			color: var(--text-main);
+			text-decoration: none;
+			font-size: 13px;
+		}
+		.page-link.disabled {
+			pointer-events: none;
+			opacity: 0.5;
+		}
+		.page-meta {
+			font-size: 13px;
+			color: var(--text-muted);
+		}
+
 		.admin-actions {
 			margin-top: 8px;
 			display: flex;
@@ -1022,7 +1123,16 @@ function registerLogsReadRoutes(app, deps) {
 					${filterFormHtml}
 					${pinnedNoteHtml}
 					${activeRangeSummary}
-					${contentHtml}
+					<div
+						id="logStream"
+						data-base-qs="${escapeHtml(baseQs)}"
+						data-page="${page}"
+						data-total-pages="${totalPages}"
+					>
+						${contentHtml}
+					</div>
+					<div id="logStreamLoader" class="sub" style="display:none; margin-top:10px;">Loading more logs…</div>
+					${paginationHtml}
 				</main>
 
 				<aside class="sidebar-card">
@@ -1063,6 +1173,97 @@ function registerLogsReadRoutes(app, deps) {
 	</div>
 
 	<script>
+		// Infinite scroll (loads 50 logs at a time)
+		(function () {
+			var stream = document.getElementById("logStream");
+			if (!stream) return;
+			var loader = document.getElementById("logStreamLoader");
+			var baseQs = stream.getAttribute("data-base-qs") || "";
+			var page = parseInt(stream.getAttribute("data-page") || "1", 10) || 1;
+			var totalPages = parseInt(stream.getAttribute("data-total-pages") || "1", 10) || 1;
+			var loading = false;
+
+			// Keep link-based pagination as a no-JS fallback; hide it when JS runs.
+			var pagination = document.querySelector(".pagination");
+			if (pagination) pagination.style.display = "none";
+
+			function buildUrl(nextPage) {
+				var qs = baseQs ? baseQs + "&" : "";
+				return "/logs/page?" + qs + "page=" + encodeURIComponent(String(nextPage));
+			}
+
+			function mergeAndAppend(html) {
+				var temp = document.createElement("div");
+				temp.innerHTML = html;
+				var sections = temp.querySelectorAll("section.day-section");
+				for (var i = 0; i < sections.length; i++) {
+					var section = sections[i];
+					var day = section.getAttribute("data-day") || "";
+					if (!day) {
+						stream.appendChild(section);
+						continue;
+					}
+					var existing = stream.querySelector('section.day-section[data-day="' + CSS.escape(day) + '"]');
+					if (!existing) {
+						stream.appendChild(section);
+						continue;
+					}
+					var existingLogs = existing.querySelector(".day-logs");
+					var newLogs = section.querySelector(".day-logs");
+					if (!existingLogs || !newLogs) {
+						stream.appendChild(section);
+						continue;
+					}
+					while (newLogs.firstChild) {
+						existingLogs.appendChild(newLogs.firstChild);
+					}
+				}
+			}
+
+			async function loadNext() {
+				if (loading) return;
+				if (page >= totalPages) return;
+				loading = true;
+				if (loader) loader.style.display = "block";
+				try {
+					var nextPage = page + 1;
+					var res = await fetch(buildUrl(nextPage), { headers: { "Accept": "application/json" } });
+					if (!res.ok) return;
+					var data = await res.json();
+					if (!data || typeof data.sectionsHtml !== "string") return;
+					mergeAndAppend(data.sectionsHtml);
+					page = Number(data.page) || nextPage;
+					stream.setAttribute("data-page", String(page));
+					if (typeof data.totalPages === "number") {
+						totalPages = data.totalPages;
+						stream.setAttribute("data-total-pages", String(totalPages));
+					}
+				} catch (e) {
+					// swallow; user can still use link pagination without JS
+				} finally {
+					loading = false;
+					if (loader) loader.style.display = page < totalPages ? "none" : "none";
+				}
+			}
+
+			var ticking = false;
+			function onScroll() {
+				if (ticking) return;
+				ticking = true;
+				requestAnimationFrame(function () {
+					ticking = false;
+					if (loading) return;
+					if (page >= totalPages) return;
+					var nearBottom = window.innerHeight + window.scrollY >= document.body.offsetHeight - 800;
+					if (nearBottom) loadNext();
+				});
+			}
+
+			window.addEventListener("scroll", onScroll);
+			// Also attempt immediately in case the first page is short
+			onScroll();
+		})();
+
 		// Pinned note "Copy Link"
 		(function () {
 			const btn = document.getElementById("copyPinnedLink");
@@ -1162,8 +1363,12 @@ function registerLogsReadRoutes(app, deps) {
 `;
 
 							res.send(html);
+					})().catch((err) => {
+						console.error("Homepage render failed:", err);
+						if (!res.headersSent) {
+							res.status(500).send("DB error");
 						}
-					);
+					});
 				}
 
 				if (!personalUsername) {
@@ -1208,6 +1413,238 @@ function registerLogsReadRoutes(app, deps) {
 				}
 			}
 		);
+	});
+
+	// ---------- Homepage infinite-scroll page loader (JSON) ----------
+	app.get("/logs/page", (req, res) => {
+		// Force initial admin setup before anything else
+		if (getRequireAdminSetup()) {
+			res.status(400).json({ error: "admin_setup_required" });
+			return;
+		}
+
+		const userFilter = req.query.user || "";
+		const period = req.query.period || "";
+		const dateRef = req.query.date || "";
+
+		const currentUser = getCurrentUser(req);
+		const admin = isAdmin(req);
+		if (!currentUser && !admin) {
+			res.status(401).json({ error: "login_required" });
+			return;
+		}
+
+		const CONTACT_EMAIL = getContactEmail();
+		const CONTACT_DISCORD = getContactDiscord();
+
+		const dbAllAsync = (sql, params = []) =>
+			new Promise((resolve, reject) => {
+				db.all(sql, params, (err, rows) => {
+					if (err) return reject(err);
+					resolve(rows || []);
+				});
+			});
+		const dbGetAsync = (sql, params = []) =>
+			new Promise((resolve, reject) => {
+				db.get(sql, params, (err, row) => {
+					if (err) return reject(err);
+					resolve(row || null);
+				});
+			});
+
+		(async () => {
+			// ----- Date range filtering (day / week / month / year) -----
+			let rangeStart = null;
+			let rangeEnd = null;
+			if (period && dateRef) {
+				const base = new Date(dateRef);
+				if (!isNaN(base.getTime())) {
+					const y = base.getFullYear();
+					const m = base.getMonth();
+					const d = base.getDate();
+					if (period === "day") {
+						const start = new Date(y, m, d);
+						const end = new Date(y, m, d);
+						rangeStart = start.toISOString().split("T")[0];
+						rangeEnd = end.toISOString().split("T")[0];
+					} else if (period === "week") {
+						const dayOfWeek = base.getDay();
+						const offsetToMonday = (dayOfWeek + 6) % 7;
+						const start = new Date(base);
+						start.setDate(base.getDate() - offsetToMonday);
+						const end = new Date(start);
+						end.setDate(start.getDate() + 6);
+						rangeStart = start.toISOString().split("T")[0];
+						rangeEnd = end.toISOString().split("T")[0];
+					} else if (period === "month") {
+						const start = new Date(y, m, 1);
+						const end = new Date(y, m + 1, 0);
+						rangeStart = start.toISOString().split("T")[0];
+						rangeEnd = end.toISOString().split("T")[0];
+					} else if (period === "year") {
+						const start = new Date(y, 0, 1);
+						const end = new Date(y, 11, 31);
+						rangeStart = start.toISOString().split("T")[0];
+						rangeEnd = end.toISOString().split("T")[0];
+					}
+				}
+			}
+
+			const PAGE_SIZE = 50;
+			const requestedPage = Math.max(1, parseInt(req.query.page, 10) || 1);
+
+			const whereParts = [];
+			const whereParams = [];
+			if (rangeStart && rangeEnd) {
+				whereParts.push("l.date >= ? AND l.date <= ?");
+				whereParams.push(rangeStart, rangeEnd);
+			}
+			if (userFilter) {
+				whereParts.push("l.username = ?");
+				whereParams.push(userFilter);
+			}
+			const whereSql = whereParts.length ? "WHERE " + whereParts.join(" AND ") : "";
+
+			const countRow = await dbGetAsync(
+				`SELECT COUNT(*) AS totalCount
+				 FROM logs l
+				 ${whereSql}`,
+				whereParams
+			);
+			const totalCount = (countRow && countRow.totalCount) || 0;
+			const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+			const page = Math.min(requestedPage, totalPages);
+			const offset = (page - 1) * PAGE_SIZE;
+
+			const pageRows = await dbAllAsync(
+				`SELECT l.*,
+						EXISTS(SELECT 1 FROM log_history h WHERE h.log_id = l.id) AS has_history
+				 FROM logs l
+				 ${whereSql}
+				 ORDER BY l.date DESC, l.id DESC
+				 LIMIT ? OFFSET ?`,
+				[...whereParams, PAGE_SIZE, offset]
+			);
+
+			const grouped = {};
+			pageRows.forEach((log) => {
+				const key = log.date || "No Date";
+				if (!grouped[key]) grouped[key] = [];
+				grouped[key].push(log);
+			});
+			const dates = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
+
+			const sectionsHtml = dates
+				.map((date) => {
+					const logs = grouped[date];
+					const totalHours = logs.reduce(
+						(sum, log) => sum + (Number(log.hours) || 0),
+						0
+					);
+					const countEntries = logs.length;
+
+					const logsHtml = logs
+						.map((log) => {
+							let mediaHtml = "";
+							if (log.media_path) {
+								const safePath = escapeHtml(log.media_path);
+								if (log.media_type === "video") {
+									mediaHtml = `
+									<div class="media">
+										<video controls preload="metadata" class="media-element">
+											<source src="${safePath}">
+											Your browser does not support the video tag.
+										</video>
+									</div>
+								`;
+								} else {
+									mediaHtml = `
+									<div class="media">
+										<img src="${safePath}" loading="lazy" class="media-element" alt="Log media">
+									</div>
+								`;
+								}
+							} else if (log.image_url) {
+								mediaHtml = `
+								<div class="media">
+									<img src="${escapeHtml(log.image_url)}" loading="lazy" class="media-element" alt="Log image">
+								</div>
+							`;
+							}
+
+							const adminActions = admin
+								? `
+									<div class="admin-actions">
+										<a href="/edit/${log.id}" class="pill-button pill-button-ghost">Edit</a>
+										<form method="POST" action="/delete/${log.id}" style="display:inline;" onsubmit="return confirm('Delete this log?');">
+											<button type="submit" class="pill-button pill-button-danger">Delete</button>
+										</form>
+									</div>
+								`
+								: "";
+
+							const usernameLabel = log.username
+								? `<span class="username-badge">@${escapeHtml(log.username)}</span>`
+								: `<span class="username-badge username-anon">[no user]</span>`;
+
+							const editedBadge = log.has_history
+								? '<span class="edited-badge">Edited</span>'
+								: "";
+
+							return `
+								<article class="log-card">
+									<header class="log-header">
+										<div>
+											${usernameLabel}
+											${editedBadge}
+											<div class="hours-row">
+												<span class="hours-label">Hours</span>
+												<span class="hours-value">${log.hours}</span>
+											</div>
+										</div>
+										<div class="log-id">#${log.id}</div>
+									</header>
+									<div class="log-body">
+										${marked.parse(log.content || "")}
+										${mediaHtml}
+									</div>
+									${adminActions}
+									<div class="log-footer">
+										${
+											log.has_history
+												? `<a href="/logs/${log.id}/history" class="history-link">View edit history</a> · `
+												: ""
+										}
+										<span class="dispute-hint">
+											If you believe this log is incorrect, contact
+											<code>${CONTACT_EMAIL}</code> or <code>${CONTACT_DISCORD}</code>.
+										</span>
+									</div>
+								</article>
+							`;
+						})
+						.join("");
+
+					return `
+						<section class="day-section" data-day="${escapeHtml(date)}">
+							<div class="day-header">
+								<h2 class="day-title">${escapeHtml(date)}</h2>
+								<div class="day-meta">
+									<span>${countEntries} entr${countEntries === 1 ? "y" : "ies"}</span>
+									<span>${totalHours.toFixed(2)} total hours</span>
+								</div>
+							</div>
+							<div class="day-logs">${logsHtml}</div>
+						</section>
+					`;
+				})
+				.join("");
+
+			res.json({ sectionsHtml, page, totalPages });
+		})().catch((err) => {
+			console.error("/logs/page failed:", err);
+			res.status(500).json({ error: "db_error" });
+		});
 	});
 	}
 
