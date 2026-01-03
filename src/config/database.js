@@ -69,11 +69,29 @@ db.serialize(() => {
       image_url TEXT,
       media_path TEXT,
       media_type TEXT,
+      media_upload_id INTEGER,
       username TEXT,
       deleted INTEGER DEFAULT 0,
       deleted_at TEXT,
       deleted_by TEXT,
       delete_reason TEXT
+    )
+  `);
+
+  // Track async media uploads (used by uploader system).
+  db.run(`
+    CREATE TABLE IF NOT EXISTS media_uploads (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      log_id INTEGER,
+      status TEXT,
+      original_name TEXT,
+      stored_name TEXT,
+      mime_type TEXT,
+      bytes_total INTEGER,
+      bytes_loaded INTEGER,
+      error TEXT,
+      created_at TEXT,
+      updated_at TEXT
     )
   `);
 
@@ -116,6 +134,7 @@ db.serialize(() => {
   db.run("ALTER TABLE logs ADD COLUMN image_url TEXT", () => {});
   db.run("ALTER TABLE logs ADD COLUMN media_path TEXT", () => {});
   db.run("ALTER TABLE logs ADD COLUMN media_type TEXT", () => {});
+  db.run("ALTER TABLE logs ADD COLUMN media_upload_id INTEGER", () => {});
   db.run("ALTER TABLE logs ADD COLUMN username TEXT", () => {});
   db.run(
     "ALTER TABLE users ADD COLUMN must_change_password INTEGER DEFAULT 0",

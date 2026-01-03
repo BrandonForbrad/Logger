@@ -58,6 +58,286 @@ function adminSetupPage() {
   `;
 }
 
+function uploadOverlayCss() {
+  return `
+    .upload-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.35);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      z-index: 9999;
+    }
+    .upload-overlay .upload-card {
+      background: white;
+      border: 1px solid #e5e7eb;
+      border-radius: 16px;
+      box-shadow: 0 10px 25px rgba(15, 23, 42, 0.18);
+      width: 100%;
+      max-width: 440px;
+      padding: 16px 16px;
+    }
+    .upload-title {
+      margin: 0 0 6px;
+      font-size: 14px;
+      font-weight: 700;
+    }
+    .upload-sub {
+      margin: 0 0 10px;
+      font-size: 12px;
+      color: #6b7280;
+    }
+    .upload-bar {
+      height: 10px;
+      background: #e5e7eb;
+      border-radius: 999px;
+      overflow: hidden;
+    }
+    .upload-bar-fill {
+      height: 100%;
+      width: 0%;
+      background: #00a2ff;
+      transition: width 120ms linear;
+    }
+    .upload-meta {
+      margin-top: 8px;
+      font-size: 11px;
+      color: #6b7280;
+      font-variant-numeric: tabular-nums;
+    }
+  `;
+}
+
+function uploadOverlayHtml() {
+  return `
+    <div id="uploadOverlay" class="upload-overlay" aria-live="polite" aria-busy="true" style="display:none;">
+      <div class="upload-card">
+        <div class="upload-title" id="uploadTitle">Uploading…</div>
+        <div class="upload-sub" id="uploadStatus">Uploading… 0%</div>
+        <div class="upload-bar"><div class="upload-bar-fill" id="uploadBarFill"></div></div>
+        <div class="upload-meta" id="uploadMeta"></div>
+      </div>
+    </div>
+  `;
+}
+
+function uploadOverlayClientJs() {
+  return `
+    (function () {
+      var VERSION = "2026-01-02-v2";
+      if (window.__dlUpload && window.__dlUpload.version === VERSION) return;
+
+      function el(id) {
+        return document.getElementById(id);
+      }
+
+      function formatBytes(bytes) {
+        var n = Number(bytes) || 0;
+        var units = ["B", "KB", "MB", "GB", "TB"];
+        var i = 0;
+        while (n >= 1024 && i < units.length - 1) {
+          n = n / 1024;
+          i++;
+        }
+        var digits = i === 0 ? 0 : i === 1 ? 0 : 1;
+        return n.toFixed(digits) + " " + units[i];
+      }
+
+      function showOverlay(opts) {
+        opts = opts || {};
+        var overlay = el("uploadOverlay");
+        if (!overlay) return;
+        var title = el("uploadTitle");
+        var status = el("uploadStatus");
+        var bar = el("uploadBarFill");
+        var meta = el("uploadMeta");
+        if (title) title.textContent = opts.title || "Uploading...";
+        if (status) status.textContent = opts.status || "Starting...";
+        if (meta) meta.textContent = opts.meta || "";
+        if (bar) bar.style.width = "0%";
+        overlay.style.display = "flex";
+      }
+
+      function hideOverlay() {
+        var overlay = el("uploadOverlay");
+        if (overlay) overlay.style.display = "none";
+      }
+
+      function setProgress(loaded, total) {
+        var status = el("uploadStatus");
+        var bar = el("uploadBarFill");
+        var meta = el("uploadMeta");
+        if (total && total > 0) {
+          var pct = Math.max(0, Math.min(100, Math.round((loaded / total) * 100)));
+          if (bar) bar.style.width = pct + "%";
+          if (status) status.textContent = "Uploading... " + pct + "%";
+          if (meta) meta.textContent = formatBytes(loaded) + " / " + formatBytes(total);
+        } else {
+          if (bar) bar.style.width = "25%";
+          if (status) status.textContent = "Uploading...";
+          if (meta) meta.textContent = formatBytes(loaded);
+        }
+      }
+
+      function replaceDocumentIfHtml(text) {
+        if (!text) return false;
+        var t = String(text).trim();
+        if (!t) return false;
+        if (!(t.startsWith("<!DOCTYPE") || t.startsWith("<html") || t.startsWith("<HTML"))) return false;
+        document.open();
+        document.write(text);
+        document.close();
+        return true;
+      }
+
+      function bindForm(form) {
+        if (!form) return;
+        if (form.__dlUploadBound === VERSION) return;
+        form.__dlUploadBound = VERSION;
+
+        form.addEventListener("submit", function (e) {
+          if (e.defaultPrevented) return;
+
+          try {
+            if (typeof form.checkValidity === "function" && !form.checkValidity()) {
+              return;
+            }
+          } catch (err) {}
+
+          var fileInput = form.querySelector('input[type="file"]');
+          var file = (fileInput && fileInput.files && fileInput.files.length > 0) ? fileInput.files[0] : null;
+          var hasFile = !!file;
+
+          e.preventDefault();
+
+          var submitBtn = form.querySelector('button[type="submit"], input[type="submit"]');
+          if (submitBtn) {
+            if (!submitBtn.__origText) {
+              submitBtn.__origText = (submitBtn.tagName === "INPUT") ? (submitBtn.value || "") : (submitBtn.textContent || "");
+            }
+            submitBtn.disabled = true;
+            var btnLabel = hasFile ? "Uploading... 0%" : "Saving...";
+            if (submitBtn.tagName === "INPUT") submitBtn.value = btnLabel;
+            else submitBtn.textContent = btnLabel;
+          }
+
+          showOverlay({
+            title: hasFile ? "Uploading..." : "Saving...",
+            status: hasFile ? "Uploading... 0%" : "Saving...",
+            meta: file && file.size ? ("File size: " + formatBytes(file.size)) : ""
+          });
+
+          var xhr = new XMLHttpRequest();
+          xhr.open((form.method || "POST").toUpperCase(), form.action);
+          xhr.withCredentials = true;
+
+          xhr.upload.onprogress = function (evt) {
+            if (!evt.lengthComputable) return;
+            var pct = Math.round((evt.loaded / evt.total) * 100);
+            setProgress(evt.loaded, evt.total);
+            if (submitBtn) {
+              var label = "Uploading... " + pct + "%";
+              if (submitBtn.tagName === "INPUT") submitBtn.value = label;
+              else submitBtn.textContent = label;
+            }
+          };
+
+          xhr.upload.onloadend = function () {
+            var status = el("uploadStatus");
+            if (status) status.textContent = "Processing...";
+            if (submitBtn) {
+              if (submitBtn.tagName === "INPUT") submitBtn.value = "Processing...";
+              else submitBtn.textContent = "Processing...";
+            }
+          };
+
+          xhr.onerror = function () {
+            hideOverlay();
+            if (submitBtn) {
+              submitBtn.disabled = false;
+              if (submitBtn.tagName === "INPUT") submitBtn.value = submitBtn.__origText || "Save";
+              else submitBtn.textContent = submitBtn.__origText || "Save";
+            }
+            alert("Upload failed (network error).");
+          };
+
+          xhr.onload = function () {
+            if (xhr.status >= 200 && xhr.status < 400) {
+              if (replaceDocumentIfHtml(xhr.responseText)) return;
+              var url = xhr.responseURL;
+              if (url) {
+                window.location.href = url;
+                return;
+              }
+              window.location.reload();
+              return;
+            }
+            hideOverlay();
+            if (submitBtn) {
+              submitBtn.disabled = false;
+              if (submitBtn.tagName === "INPUT") submitBtn.value = submitBtn.__origText || "Save";
+              else submitBtn.textContent = submitBtn.__origText || "Save";
+            }
+            alert("Upload failed: " + xhr.status);
+          };
+
+          var fd = new FormData(form);
+          xhr.send(fd);
+        }, true);
+      }
+
+      function bindAll() {
+        var forms = document.querySelectorAll('form[data-upload-progress], form[enctype="multipart/form-data"]');
+        for (var i = 0; i < forms.length; i++) bindForm(forms[i]);
+      }
+
+      function uploadInline(file) {
+        return new Promise(function (resolve, reject) {
+          if (!file) return reject(new Error("no file"));
+          var fd = new FormData();
+          fd.append("file", file);
+          var xhr = new XMLHttpRequest();
+          xhr.open("POST", "/upload-inline");
+          xhr.withCredentials = true;
+          xhr.onerror = function () {
+            reject(new Error("network error"));
+          };
+          xhr.onload = function () {
+            if (xhr.status < 200 || xhr.status >= 400) {
+              reject(new Error("upload failed: " + xhr.status));
+              return;
+            }
+            try {
+              var data = JSON.parse(xhr.responseText || "{}");
+              resolve(data);
+            } catch (e) {
+              reject(new Error("invalid response"));
+            }
+          };
+          xhr.send(fd);
+        });
+      }
+
+      window.__dlUpload = {
+        version: VERSION,
+        bindAll: bindAll,
+        bindForm: bindForm,
+        uploadInline: uploadInline,
+        show: showOverlay,
+        hide: hideOverlay,
+      };
+
+      if (document.readyState === "loading") {
+        document.addEventListener("DOMContentLoaded", bindAll);
+      } else {
+        bindAll();
+      }
+    })();
+  `;
+}
+
 function policyPage({ CONTACT_EMAIL, CONTACT_DISCORD }) {
   return `
   <!DOCTYPE html>
@@ -361,6 +641,7 @@ function editLogPage({
           border:1px solid #fecaca;
           margin-bottom:10px;
         }
+        ${uploadOverlayCss()}
       </style>
     </head>
     <body>
@@ -382,7 +663,7 @@ function editLogPage({
             If the original user disputes this change, they must contact us at <code>${CONTACT_EMAIL}</code> or <code>${CONTACT_DISCORD}</code>.
           </div>
 
-          <form method="POST" action="/edit/${logId}" enctype="multipart/form-data">
+          <form method="POST" action="/edit/${logId}" enctype="multipart/form-data" data-upload-progress data-upload-ui-version="2026-01-02">
             <div class="field">
               <div class="label-row">
                 <label>User</label>
@@ -445,7 +726,12 @@ function editLogPage({
         </div>
       </div>
 
+      ${uploadOverlayHtml()}
+
       <script>
+        ${uploadOverlayClientJs()}
+        if (window.__dlUpload) window.__dlUpload.bindAll();
+
         const textarea = document.getElementById("content");
         const preview = document.getElementById("preview");
 
@@ -738,6 +1024,7 @@ function pinnedNewPage({ currentUserEscaped }) {
       @media (max-width:800px) {
         .layout { flex-direction:column; }
       }
+      ${uploadOverlayCss()}
     </style>
   </head>
   <body>
@@ -754,7 +1041,7 @@ function pinnedNewPage({ currentUserEscaped }) {
           </div>
         </div>
 
-        <form method="POST" action="/pinned/new">
+        <form method="POST" action="/pinned/new" enctype="multipart/form-data" data-upload-progress>
           <div class="field">
             <div class="label-row">
               <label>Pinned Note (Markdown, with paste-images)</label>
@@ -784,6 +1071,14 @@ function pinnedNewPage({ currentUserEscaped }) {
             </div>
           </div>
 
+          <div class="field">
+            <div class="label-row">
+              <label>Attach Media (optional)</label>
+              <span class="hint">Upload an image or video to embed in your pinned note.</span>
+            </div>
+            <input type="file" name="media" accept="image/*,video/*" />
+          </div>
+
           <div style="margin-top:14px; display:flex; gap:10px; align-items:center;">
             <button type="submit">Save & Pin</button>
             <a href="/" class="secondary">Cancel</a>
@@ -792,7 +1087,10 @@ function pinnedNewPage({ currentUserEscaped }) {
       </div>
     </div>
 
+      ${uploadOverlayHtml()}
+
     <script>
+        ${uploadOverlayClientJs()}
       const textarea = document.getElementById("content");
       const preview = document.getElementById("preview");
 
@@ -897,35 +1195,48 @@ function pinnedNewPage({ currentUserEscaped }) {
         updatePreview();
       }
 
-      // Paste image support (same as log editor)
+      // Paste image/video support (inline upload + embed)
       textarea.addEventListener("paste", async (event) => {
         const items = event.clipboardData?.items || [];
         for (const item of items) {
-          if (item.type && item.type.startsWith("image/")) {
-            event.preventDefault();
-            const file = item.getAsFile();
-            if (!file) return;
-            const formData = new FormData();
-            formData.append("file", file);
-            try {
-              const res = await fetch("/upload-inline", {
-                method: "POST",
-                body: formData
-              });
-              const data = await res.json();
-              if (!data.url) return;
-              const before = textarea.value.slice(0, textarea.selectionStart);
-              const after = textarea.value.slice(textarea.selectionEnd);
-              const insertion = "\n<img src=\\\"" + data.url + "\\\" style=\\\"max-width:100%; width:400px;\\\" />\n";
-              const nextPos = before.length + insertion.length;
-              textarea.value = before + insertion + after;
-              textarea.selectionStart = textarea.selectionEnd = nextPos;
-              updatePreview();
-            } catch (e) {
-              alert("Failed to upload pasted image.");
-            }
-            return;
+          const type = item.type || "";
+          if (!type.startsWith("image/") && !type.startsWith("video/")) continue;
+
+          event.preventDefault();
+          const file = item.getAsFile();
+          if (!file) return;
+
+          try {
+            const data = window.__dlUpload
+              ? await window.__dlUpload.uploadInline(file)
+              : await (async () => {
+                  const formData = new FormData();
+                  formData.append("file", file);
+                  const res = await fetch("/upload-inline", {
+                    method: "POST",
+                    body: formData,
+                  });
+                  return await res.json();
+                })();
+
+            if (!data || !data.url) return;
+
+            const before = textarea.value.slice(0, textarea.selectionStart);
+            const after = textarea.value.slice(textarea.selectionEnd);
+            const insertion = type.startsWith("video/")
+              ? "\n<video controls style=\\\"max-width:100%; width:400px;\\\" preload=\\\"none\\\"><source src=\\\"" +
+                data.url +
+                "\\\" /></video>\n"
+              : "\n<img src=\\\"" + data.url + "\\\" style=\\\"max-width:100%; width:400px;\\\" />\n";
+
+            const nextPos = before.length + insertion.length;
+            textarea.value = before + insertion + after;
+            textarea.selectionStart = textarea.selectionEnd = nextPos;
+            updatePreview();
+          } catch (e) {
+            alert("Failed to upload pasted media.");
           }
+          return;
         }
       });
     </script>
@@ -1202,6 +1513,7 @@ function pinnedEditPage({ noteId, safeUser, safeDate, safeContent }) {
         @media (max-width:800px) {
           .layout { flex-direction:column; }
         }
+        ${uploadOverlayCss()}
       </style>
     </head>
     <body>
@@ -1259,7 +1571,10 @@ function pinnedEditPage({ noteId, safeUser, safeDate, safeContent }) {
         </div>
       </div>
 
+      ${uploadOverlayHtml()}
+
       <script>
+        ${uploadOverlayClientJs()}
         const textarea = document.getElementById("content");
         const preview = document.getElementById("preview");
 
@@ -1364,35 +1679,47 @@ function pinnedEditPage({ noteId, safeUser, safeDate, safeContent }) {
           updatePreview();
         }
 
-        // Paste image support (same as log editor)
+        // Paste image/video support (inline upload + embed)
         textarea.addEventListener("paste", async (event) => {
           const items = event.clipboardData?.items || [];
           for (const item of items) {
-            if (item.type && item.type.startsWith("image/")) {
-              event.preventDefault();
-              const file = item.getAsFile();
-              if (!file) return;
-              const formData = new FormData();
-              formData.append("file", file);
-              try {
-                const res = await fetch("/upload-inline", {
-                  method: "POST",
-                  body: formData
-                });
-                const data = await res.json();
-                if (!data.url) return;
-                const before = textarea.value.slice(0, textarea.selectionStart);
-                const after = textarea.value.slice(textarea.selectionEnd);
-                const insertion = "\\n<img src=\\\"" + data.url + "\\\" style=\\\"max-width:100%; width:400px;\\\" />\\n";
-                const nextPos = before.length + insertion.length;
-                textarea.value = before + insertion + after;
-                textarea.selectionStart = textarea.selectionEnd = nextPos;
-                updatePreview();
-              } catch (e) {
-                alert("Failed to upload pasted image.");
-              }
-              return;
+            const type = item.type || "";
+            if (!type.startsWith("image/") && !type.startsWith("video/")) continue;
+
+            event.preventDefault();
+            const file = item.getAsFile();
+            if (!file) return;
+
+            try {
+              const data = window.__dlUpload
+                ? await window.__dlUpload.uploadInline(file)
+                : await (async () => {
+                    const formData = new FormData();
+                    formData.append("file", file);
+                    const res = await fetch("/upload-inline", {
+                      method: "POST",
+                      body: formData,
+                    });
+                    return await res.json();
+                  })();
+
+              if (!data || !data.url) return;
+              const before = textarea.value.slice(0, textarea.selectionStart);
+              const after = textarea.value.slice(textarea.selectionEnd);
+              const insertion = type.startsWith("video/")
+                ? "\\n<video controls style=\\\"max-width:100%; width:400px;\\\" preload=\\\"none\\\"><source src=\\\"" +
+                  data.url +
+                  "\\\" /></video>\\n"
+                : "\\n<img src=\\\"" + data.url + "\\\" style=\\\"max-width:100%; width:400px;\\\" />\\n";
+
+              const nextPos = before.length + insertion.length;
+              textarea.value = before + insertion + after;
+              textarea.selectionStart = textarea.selectionEnd = nextPos;
+              updatePreview();
+            } catch (e) {
+              alert("Failed to upload pasted media.");
             }
+            return;
           }
         });
       </script>
@@ -1864,7 +2191,7 @@ function firstLoginSetPasswordPage({ usernameEscaped }) {
           `;
 }
 
-function newLogPage({ today, currentUserEscaped, CONTACT_EMAIL, CONTACT_DISCORD }) {
+function newLogPage({ today, currentUserEscaped, CONTACT_EMAIL, CONTACT_DISCORD, ASYNC_UPLOAD_THRESHOLD_BYTES }) {
   return `
   <!DOCTYPE html>
   <html>
@@ -1953,6 +2280,7 @@ function newLogPage({ today, currentUserEscaped, CONTACT_EMAIL, CONTACT_DISCORD 
       @media (max-width:800px) {
         .layout { flex-direction:column; }
       }
+      ${uploadOverlayCss()}
     </style>
   </head>
   <body>
@@ -1969,7 +2297,7 @@ function newLogPage({ today, currentUserEscaped, CONTACT_EMAIL, CONTACT_DISCORD 
           </div>
         </div>
 
-        <form method="POST" action="/new" enctype="multipart/form-data">
+  <form method="POST" action="/new" enctype="multipart/form-data" data-upload-progress>
           <div class="field">
             <div class="label-row">
               <label>Date</label>
@@ -1997,6 +2325,12 @@ function newLogPage({ today, currentUserEscaped, CONTACT_EMAIL, CONTACT_DISCORD 
               <span class="hint">Stored locally under /uploads</span>
             </div>
             <input type="file" name="media" accept="image/*,video/*" />
+            <div id="asyncUploadHint" class="hint" style="display:none; margin-top:6px;">
+              Large file detected — it will upload in a separate window after you click Save Log.
+            </div>
+            <div id="uploadJsStatus" class="hint" style="margin-top:6px;">
+              Upload progress UI: loading…
+            </div>
           </div>
 
           <div class="field">
@@ -2053,7 +2387,14 @@ function newLogPage({ today, currentUserEscaped, CONTACT_EMAIL, CONTACT_DISCORD 
       </div>
     </div>
 
+    ${uploadOverlayHtml()}
+
     <script>
+      ${uploadOverlayClientJs()}
+      if (window.__dlUpload) window.__dlUpload.bindAll();
+
+      /* Async uploader code removed - using simple XHR upload with progress */
+
       const textarea = document.getElementById("content");
       const preview = document.getElementById("preview");
 
@@ -2065,35 +2406,47 @@ function newLogPage({ today, currentUserEscaped, CONTACT_EMAIL, CONTACT_DISCORD 
       textarea.addEventListener("input", updatePreview);
       updatePreview();
 
-      // Paste image support
+      // Paste image/video support (inline upload + embed)
       textarea.addEventListener("paste", async (event) => {
         const items = event.clipboardData?.items || [];
         for (const item of items) {
-          if (item.type && item.type.startsWith("image/")) {
-            event.preventDefault();
-            const file = item.getAsFile();
-            if (!file) return;
-            const formData = new FormData();
-            formData.append("file", file);
-            try {
-              const res = await fetch("/upload-inline", {
-                method: "POST",
-                body: formData
-              });
-              const data = await res.json();
-              if (!data.url) return;
-              const before = textarea.value.slice(0, textarea.selectionStart);
-              const after = textarea.value.slice(textarea.selectionEnd);
-              const insertion = "\\n<img src=\\\"" + data.url + "\\\" style=\\\"max-width:100%; width:400px;\\\" />\\n";
-              const nextPos = before.length + insertion.length;
-              textarea.value = before + insertion + after;
-              textarea.selectionStart = textarea.selectionEnd = nextPos;
-              updatePreview();
-            } catch (e) {
-              alert("Failed to upload pasted image.");
-            }
-            return;
+          const type = item.type || "";
+          if (!type.startsWith("image/") && !type.startsWith("video/")) continue;
+
+          event.preventDefault();
+          const file = item.getAsFile();
+          if (!file) return;
+
+          try {
+            const data = window.__dlUpload
+              ? await window.__dlUpload.uploadInline(file)
+              : await (async () => {
+                  const formData = new FormData();
+                  formData.append("file", file);
+                  const res = await fetch("/upload-inline", {
+                    method: "POST",
+                    body: formData,
+                  });
+                  return await res.json();
+                })();
+
+            if (!data || !data.url) return;
+            const before = textarea.value.slice(0, textarea.selectionStart);
+            const after = textarea.value.slice(textarea.selectionEnd);
+            const insertion = type.startsWith("video/")
+              ? "\\n<video controls style=\\\"max-width:100%; width:400px;\\\" preload=\\\"none\\\"><source src=\\\"" +
+                data.url +
+                "\\\" /></video>\\n"
+              : "\\n<img src=\\\"" + data.url + "\\\" style=\\\"max-width:100%; width:400px;\\\" />\\n";
+
+            const nextPos = before.length + insertion.length;
+            textarea.value = before + insertion + after;
+            textarea.selectionStart = textarea.selectionEnd = nextPos;
+            updatePreview();
+          } catch (e) {
+            alert("Failed to upload pasted media.");
           }
+          return;
         }
       });
 
@@ -2193,6 +2546,230 @@ function newLogPage({ today, currentUserEscaped, CONTACT_EMAIL, CONTACT_DISCORD 
         textarea.focus();
         updatePreview();
       }
+    </script>
+  </body>
+  </html>
+  `;
+}
+
+function uploaderPage({ currentUserEscaped, thresholdBytes }) {
+  return `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <title>Uploader</title>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <style>
+      body { font-family: system-ui, sans-serif; margin:0; background:#f3f4f6; }
+      .shell { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:16px; }
+      .card {
+        background:white;
+        padding:18px 18px;
+        border-radius:16px;
+        border:1px solid #e5e7eb;
+        box-shadow:0 10px 25px rgba(15,23,42,0.08);
+        width:100%;
+        max-width:520px;
+      }
+      h1 { margin:0 0 4px; font-size:18px; }
+      p.sub { margin:0 0 12px; font-size:13px; color:#6b7280; }
+      .row { display:flex; gap:8px; align-items:center; flex-wrap:wrap; }
+      input[type="file"] { font-size:13px; }
+      button {
+        padding:8px 14px;
+        border-radius:999px;
+        border:none;
+        background:#00a2ff;
+        color:white;
+        font-weight:500;
+        cursor:pointer;
+      }
+      button.secondary { background:#e5e7eb; color:#111827; }
+      .bar { height:10px; background:#e5e7eb; border-radius:999px; overflow:hidden; margin-top:10px; }
+      .fill { height:100%; width:0%; background:#00a2ff; transition:width 120ms linear; }
+      .meta { margin-top:8px; font-size:12px; color:#6b7280; font-variant-numeric:tabular-nums; }
+      .status { margin-top:6px; font-size:13px; }
+      code { font-size:12px; }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="card">
+        <h1>Uploader</h1>
+        <p class="sub">Logged in as <strong>@${currentUserEscaped}</strong>. This page handles large media uploads.</p>
+
+        <div class="row" style="margin-bottom:8px;">
+          <input id="file" type="file" accept="image/*,video/*" />
+          <button id="start" type="button">Start Upload</button>
+          <button id="close" type="button" class="secondary">Close</button>
+        </div>
+
+        <div class="bar"><div class="fill" id="fill"></div></div>
+        <div class="status" id="status">Waiting for file…</div>
+        <div class="meta" id="meta"></div>
+
+        <p class="sub" style="margin-top:12px;">
+          Large-upload threshold: <code>${Number(thresholdBytes) || 0}</code> bytes.
+        </p>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        var THRESHOLD = ${Number(thresholdBytes) || 0};
+        var file = null;
+        var uploadId = null;
+        var logId = null;
+        var lastProgressAt = 0;
+
+        function qs(name) {
+          try {
+            var u = new URL(window.location.href);
+            return u.searchParams.get(name);
+          } catch (e) {
+            return null;
+          }
+        }
+
+        function formatBytes(bytes) {
+          var n = Number(bytes) || 0;
+          var units = ["B", "KB", "MB", "GB", "TB"];
+          var i = 0;
+          while (n >= 1024 && i < units.length - 1) { n = n / 1024; i++; }
+          var digits = i === 0 ? 0 : i === 1 ? 0 : 1;
+          return n.toFixed(digits) + " " + units[i];
+        }
+
+        var fileInput = document.getElementById("file");
+        var startBtn = document.getElementById("start");
+        var closeBtn = document.getElementById("close");
+        var statusEl = document.getElementById("status");
+        var metaEl = document.getElementById("meta");
+        var fillEl = document.getElementById("fill");
+
+        function setStatus(text) { if (statusEl) statusEl.textContent = text || ""; }
+        function setMeta(text) { if (metaEl) metaEl.textContent = text || ""; }
+        function setPct(pct) { if (fillEl) fillEl.style.width = String(pct || 0) + "%"; }
+
+        function setFile(f) {
+          file = f || null;
+          if (!file) {
+            setStatus("Waiting for file…");
+            setMeta("");
+            setPct(0);
+            return;
+          }
+          setStatus("Ready: " + (file.name || "(unnamed)"));
+          setMeta(file.size ? ("File: " + formatBytes(file.size)) : "");
+          setPct(0);
+        }
+
+        function postProgress(loaded, total) {
+          if (!uploadId) return;
+          var now = Date.now();
+          if (now - lastProgressAt < 500) return;
+          lastProgressAt = now;
+          try {
+            var fd = new FormData();
+            fd.append("loaded", String(loaded || 0));
+            fd.append("total", String(total || 0));
+            fetch("/uploader/" + encodeURIComponent(String(uploadId)) + "/progress", {
+              method: "POST",
+              body: fd,
+              credentials: "same-origin"
+            }).catch(function () {});
+          } catch (e) {}
+        }
+
+        async function initIfNeeded() {
+          if (uploadId && logId) return;
+          var qUploadId = qs("uploadId");
+          var qLogId = qs("logId");
+          uploadId = qUploadId ? Number(qUploadId) : null;
+          logId = qLogId ? Number(qLogId) : null;
+        }
+
+        function startUpload() {
+          if (!file) { setStatus("Pick a file first."); return; }
+          if (!uploadId) { setStatus("Missing uploadId (open via the New Log page)."); return; }
+
+          startBtn.disabled = true;
+          setStatus("Uploading… 0%");
+
+          var xhr = new XMLHttpRequest();
+          xhr.open("POST", "/uploader/" + encodeURIComponent(String(uploadId)));
+          xhr.withCredentials = true;
+
+          xhr.upload.onprogress = function (evt) {
+            var total = (evt && evt.lengthComputable && evt.total > 0) ? evt.total : (file && file.size ? file.size : 0);
+            var pct = total > 0 ? Math.max(0, Math.min(100, Math.round((evt.loaded / total) * 100))) : 0;
+            setPct(pct);
+            setStatus(total > 0 ? ("Uploading… " + pct + "%") : "Uploading…");
+            setMeta(total > 0 ? (formatBytes(evt.loaded) + " / " + formatBytes(total)) : formatBytes(evt.loaded));
+            postProgress(evt.loaded, total);
+          };
+          xhr.upload.onloadend = function () {
+            setStatus("Processing…");
+          };
+          xhr.onerror = function () {
+            startBtn.disabled = false;
+            setStatus("Upload failed (network error)");
+          };
+          xhr.onload = function () {
+            if (xhr.status >= 200 && xhr.status < 400) {
+              setPct(100);
+              setStatus("Upload complete. You can close this window.");
+              return;
+            }
+            startBtn.disabled = false;
+            setStatus("Upload failed: " + xhr.status);
+          };
+
+          var fd = new FormData();
+          fd.append("media", file);
+          xhr.send(fd);
+        }
+
+        fileInput.addEventListener("change", function () {
+          var f = fileInput.files && fileInput.files[0] ? fileInput.files[0] : null;
+          setFile(f);
+        });
+
+        startBtn.addEventListener("click", function () {
+          startUpload();
+        });
+
+        closeBtn.addEventListener("click", function () {
+          try { window.close(); } catch (e) {}
+        });
+
+        // Receive file + ids from the /new page.
+        window.addEventListener("message", function (event) {
+          try {
+            if (event.origin !== window.location.origin) return;
+            var data = event.data || {};
+            if (!data || data.type !== "DL_UPLOAD_INIT") return;
+            uploadId = Number(data.uploadId) || uploadId;
+            logId = Number(data.logId) || logId;
+            if (data.file) setFile(data.file);
+            if (data.autoStart) {
+              setTimeout(function () { startUpload(); }, 50);
+            }
+          } catch (e) {}
+        });
+
+        // Init from query params if present.
+        initIfNeeded().then(function () {
+          if (uploadId) setStatus("Waiting for file… (uploadId=" + uploadId + ")");
+        });
+
+        try {
+          if (window.opener && window.opener.postMessage) {
+            window.opener.postMessage({ type: 'DL_UPLOADER_READY' }, window.location.origin);
+          }
+        } catch (e) {}
+      })();
     </script>
   </body>
   </html>
@@ -2353,6 +2930,7 @@ function adminBackupsPage({ diskHtml, dbStr, uploadsStr, backupsStr, backupsHtml
           font-size:12px;
           color:#4b5563;
         }
+        ${uploadOverlayCss()}
       </style>
     </head>
     <body>
@@ -2393,12 +2971,19 @@ function adminBackupsPage({ diskHtml, dbStr, uploadsStr, backupsStr, backupsHtml
 
           <h2 style="margin-top:18px;">Restore from Uploaded File</h2>
           <p class="sub">Upload a backup .zip created by this tool to restore to that state. The server will restart after restore.</p>
-          <form method="POST" action="/admin/backups/restore-upload" enctype="multipart/form-data" onsubmit="return confirm('Restore from uploaded backup and restart the server?');">
+          <form method="POST" action="/admin/backups/restore-upload" enctype="multipart/form-data" data-upload-progress data-upload-ui-version="2026-01-02" onsubmit="return confirm('Restore from uploaded backup and restart the server?');">
             <input type="file" name="backupFile" accept=".zip" required />
             <button type="submit">Upload &amp; Restore</button>
           </form>
         </div>
       </div>
+
+      ${uploadOverlayHtml()}
+
+      <script>
+        ${uploadOverlayClientJs()}
+        if (window.__dlUpload) window.__dlUpload.bindAll();
+      </script>
     </body>
     </html>
     `;
@@ -2493,6 +3078,7 @@ module.exports = {
   legalHoldPage,
   firstLoginSetPasswordPage,
   newLogPage,
+  uploaderPage,
   adminMissedHoursPage,
   adminBackupsPage,
   restoringBackupPage,

@@ -193,6 +193,8 @@ module.exports = function registerAuthRoutes(app, deps) {
 				currentUserEscaped: escapeHtml(currentUser || "admin"),
 				CONTACT_EMAIL: getContactEmail(),
 				CONTACT_DISCORD: getContactDiscord(),
+				ASYNC_UPLOAD_THRESHOLD_BYTES:
+					Number(process.env.ASYNC_UPLOAD_THRESHOLD_BYTES) || 50 * 1024 * 1024,
 			})
 		);
 	});

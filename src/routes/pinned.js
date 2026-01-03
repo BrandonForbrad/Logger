@@ -1,8 +1,8 @@
 module.exports = function registerPinnedRoutes(app, deps) {
-	const { db, marked, views, getCurrentUser, isAdmin, escapeHtml } = deps;
+	const { db, marked, views, getCurrentUser, isAdmin, escapeHtml, upload } = deps;
 
 	// ---------- Create new pinned note (admin only) ----------
-	app.post("/pinned/new", (req, res) => {
+	app.post("/pinned/new", upload.single("media"), (req, res) => {
 		if (!isAdmin(req)) {
 			return res
 				.status(403)
@@ -10,8 +10,21 @@ module.exports = function registerPinnedRoutes(app, deps) {
 		}
 
 		const currentUser = getCurrentUser(req) || "admin";
-		const { content } = req.body;
+		let { content } = req.body;
 		const createdAt = new Date().toISOString();
+
+		// If a file was uploaded, append it to the content
+		if (req.file) {
+			const mediaPath = "/uploads/" + req.file.filename;
+			const mime = String(req.file.mimetype || "").toLowerCase();
+			let embed = "";
+			if (mime.startsWith("video/")) {
+				embed = `\n\n<video controls style="max-width:100%; width:100%;" preload="none"><source src="${mediaPath}" /></video>`;
+			} else {
+				embed = `\n\n<img src="${mediaPath}" style="max-width:100%; width:100%;" />`;
+			}
+			content = (content || "") + embed;
+		}
 
 		db.serialize(() => {
 			// Unpin any existing note

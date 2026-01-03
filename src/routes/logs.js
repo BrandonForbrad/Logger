@@ -362,6 +362,8 @@ function registerLogsReadRoutes(app, deps) {
 						const contentHtml = dates
 							.map((date) => {
 								const logs = grouped[date];
+								const LAZY_PLACEHOLDER_SRC =
+									"data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
 
 									const totalHours = logs.reduce(
 										(sum, log) => sum + (Number(log.hours) || 0),
@@ -372,33 +374,49 @@ function registerLogsReadRoutes(app, deps) {
 									const logsHtml = logs
 										.map((log) => {
 											let mediaHtml = "";
+											let uploadHtml = "";
 
 											if (log.media_path) {
 												const safePath = escapeHtml(log.media_path);
 												if (log.media_type === "video") {
 													mediaHtml = `
 													<div class="media">
-																			<video controls preload="metadata" class="media-element">
-															<source src="${safePath}">
-															Your browser does not support the video tag.
-														</video>
+																	<video controls preload="none" class="media-element" data-src="${safePath}">
+																		Your browser does not support the video tag.
+																	</video>
 													</div>
 												`;
 												} else {
 													mediaHtml = `
 													<div class="media">
-																			<img src="${safePath}" loading="lazy" class="media-element" alt="Log media">
+																	<img src="${LAZY_PLACEHOLDER_SRC}" data-src="${safePath}" loading="lazy" decoding="async" class="media-element" alt="Log media">
 													</div>
 												`;
 												}
 											} else if (log.image_url) {
 												mediaHtml = `
 												<div class="media">
-																<img src="${escapeHtml(
-														log.image_url
-																)}" loading="lazy" class="media-element" alt="Log image">
+																	<img src="${LAZY_PLACEHOLDER_SRC}" data-src="${escapeHtml(
+																		log.image_url
+																	)}" loading="lazy" decoding="async" class="media-element" alt="Log image">
 												</div>
 											`;
+											}
+
+											if (!log.media_path && log.media_upload_id) {
+												const uploadId = Number(log.media_upload_id) || 0;
+												if (uploadId > 0) {
+													uploadHtml = `
+													<div class="upload-status" data-upload-id="${uploadId}">
+														<div class="upload-status-row">
+															<span class="upload-status-text">Uploading…</span>
+															<span class="upload-status-pct">0%</span>
+														</div>
+														<div class="upload-status-bar"><div class="upload-status-fill"></div></div>
+														<div class="upload-status-meta"></div>
+													</div>
+												`;
+												}
 											}
 
 											const adminActions = admin
@@ -420,12 +438,17 @@ function registerLogsReadRoutes(app, deps) {
 												? '<span class="edited-badge">Edited</span>'
 												: "";
 
+											const uploadingBadge = (!log.media_path && log.media_upload_id)
+												? '<span class="uploading-badge">Uploading</span>'
+												: "";
+
 											return `
 											<article class="log-card">
 												<header class="log-header">
 													<div>
 														${usernameLabel}
 														${editedBadge}
+														${uploadingBadge}
 														<div class="hours-row">
 															<span class="hours-label">Hours</span>
 															<span class="hours-value">${log.hours}</span>
@@ -436,6 +459,7 @@ function registerLogsReadRoutes(app, deps) {
 												<div class="log-body">
 													${marked.parse(log.content || "")}
 													${mediaHtml}
+													${uploadHtml}
 												</div>
 												${adminActions}
 												<div class="log-footer">
@@ -588,7 +612,7 @@ function registerLogsReadRoutes(app, deps) {
 												? `
 													<a href="/pinned/${pinnedNote.id}/edit" class="pill-button pill-button-ghost">Edit</a>
 													<form method="POST" action="/pinned/${pinnedNote.id}/delete" style="display:inline;">
-														<button type="submit" class="pill-button pill-button-ghost" onclick="return confirm('Delete this pinned note?');">
+														<button t	ype="submit" class="pill-button pill-button-ghost" onclick="return confirm('Delete this pinned note?');">
 															Delete
 														</button>
 													</form>
@@ -706,6 +730,20 @@ function registerLogsReadRoutes(app, deps) {
 			color:#92400e;
 			font-size:10px;
 			font-weight:600;
+			text-transform:uppercase;
+			letter-spacing:0.06em;
+		}
+		.uploading-badge {
+			display:inline-flex;
+			align-items:center;
+			padding:2px 6px;
+			margin-left:6px;
+			border-radius:999px;
+			background: rgba(255, 255, 255, 0.75);
+			border: 1px solid var(--border);
+			color: var(--text-muted);
+			font-size:10px;
+			font-weight:700;
 			text-transform:uppercase;
 			letter-spacing:0.06em;
 		}
@@ -1030,6 +1068,40 @@ function registerLogsReadRoutes(app, deps) {
 			border-radius: 8px;
 			margin-top: 8px;
 		}
+		.upload-status {
+			margin-top: 10px;
+			padding: 10px 10px;
+			border-radius: 10px;
+			border: 1px solid var(--border);
+			background: rgba(255, 255, 255, 0.75);
+		}
+		.upload-status-row {
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+			gap: 10px;
+			font-size: 12px;
+			color: var(--text-muted);
+		}
+		.upload-status-bar {
+			height: 10px;
+			background: #e5e7eb;
+			border-radius: 999px;
+			overflow: hidden;
+			margin-top: 8px;
+		}
+		.upload-status-fill {
+			height: 100%;
+			width: 0%;
+			background: var(--accent);
+			transition: width 120ms linear;
+		}
+		.upload-status-meta {
+			margin-top: 6px;
+			font-size: 11px;
+			color: var(--text-muted);
+			font-variant-numeric: tabular-nums;
+		}
 
 		.pagination {
 			display: flex;
@@ -1175,6 +1247,76 @@ function registerLogsReadRoutes(app, deps) {
 	<script>
 		// Infinite scroll (loads 50 logs at a time)
 		(function () {
+			var LAZY_ROOT_MARGIN = "800px 0px";
+			var lazyIO = null;
+
+			function ensureVideoSource(video) {
+				if (!video) return;
+				var src = video.getAttribute("data-src");
+				if (!src) return;
+				// If it already has a source/src, don't touch it.
+				if (video.getAttribute("data-hydrated") === "1") return;
+				var source = video.querySelector("source");
+				if (!source) {
+					source = document.createElement("source");
+					video.appendChild(source);
+				}
+				source.src = src;
+				video.removeAttribute("data-src");
+				video.setAttribute("data-hydrated", "1");
+				try {
+					video.load();
+				} catch (e) {
+					// ignore
+				}
+			}
+
+			function hydrateMedia(el) {
+				if (!el) return;
+				if (el.tagName === "IMG") {
+					var src = el.getAttribute("data-src");
+					if (src) {
+						el.setAttribute("src", src);
+						el.removeAttribute("data-src");
+					}
+					return;
+				}
+				if (el.tagName === "VIDEO") {
+					ensureVideoSource(el);
+					return;
+				}
+			}
+
+			function observeLazyMedia(root) {
+				root = root || document;
+				var imgs = root.querySelectorAll ? root.querySelectorAll("img[data-src]") : [];
+				var videos = root.querySelectorAll ? root.querySelectorAll("video[data-src]") : [];
+
+				if (!("IntersectionObserver" in window)) {
+					for (var i = 0; i < imgs.length; i++) hydrateMedia(imgs[i]);
+					for (var j = 0; j < videos.length; j++) hydrateMedia(videos[j]);
+					return;
+				}
+
+				if (!lazyIO) {
+					lazyIO = new IntersectionObserver(
+						function (entries) {
+							for (var k = 0; k < entries.length; k++) {
+								var entry = entries[k];
+								if (!entry.isIntersecting) continue;
+								var target = entry.target;
+								lazyIO.unobserve(target);
+								hydrateMedia(target);
+							}
+						},
+						{ root: null, rootMargin: LAZY_ROOT_MARGIN, threshold: 0.01 }
+					);
+				}
+
+				for (var a = 0; a < imgs.length; a++) lazyIO.observe(imgs[a]);
+				for (var b = 0; b < videos.length; b++) lazyIO.observe(videos[b]);
+			}
+
 			var stream = document.getElementById("logStream");
 			if (!stream) return;
 			var loader = document.getElementById("logStreamLoader");
@@ -1201,22 +1343,26 @@ function registerLogsReadRoutes(app, deps) {
 					var day = section.getAttribute("data-day") || "";
 					if (!day) {
 						stream.appendChild(section);
+						observeLazyMedia(section);
 						continue;
 					}
 					var existing = stream.querySelector('section.day-section[data-day="' + CSS.escape(day) + '"]');
 					if (!existing) {
 						stream.appendChild(section);
+						observeLazyMedia(section);
 						continue;
 					}
 					var existingLogs = existing.querySelector(".day-logs");
 					var newLogs = section.querySelector(".day-logs");
 					if (!existingLogs || !newLogs) {
 						stream.appendChild(section);
+						observeLazyMedia(section);
 						continue;
 					}
 					while (newLogs.firstChild) {
 						existingLogs.appendChild(newLogs.firstChild);
 					}
+					observeLazyMedia(existingLogs);
 				}
 			}
 
@@ -1232,6 +1378,9 @@ function registerLogsReadRoutes(app, deps) {
 					var data = await res.json();
 					if (!data || typeof data.sectionsHtml !== "string") return;
 					mergeAndAppend(data.sectionsHtml);
+					if (window.__dl_uploadPoller && window.__dl_uploadPoller.refresh) {
+						window.__dl_uploadPoller.refresh();
+					}
 					page = Number(data.page) || nextPage;
 					stream.setAttribute("data-page", String(page));
 					if (typeof data.totalPages === "number") {
@@ -1261,7 +1410,141 @@ function registerLogsReadRoutes(app, deps) {
 
 			window.addEventListener("scroll", onScroll);
 			// Also attempt immediately in case the first page is short
+			observeLazyMedia(stream);
 			onScroll();
+		})();
+
+		// Per-log upload progress polling (for async uploader)
+		(function () {
+			var timer = null;
+			var inflight = false;
+			var lastIdsKey = "";
+
+			function qsa(sel, root) {
+				try {
+					return (root || document).querySelectorAll(sel);
+				} catch (e) {
+					return [];
+				}
+			}
+
+			function formatBytes(n) {
+				var v = Number(n) || 0;
+				if (v <= 0) return "0 B";
+				var units = ["B", "KB", "MB", "GB", "TB"];
+				var idx = 0;
+				while (v >= 1024 && idx < units.length - 1) {
+					v = v / 1024;
+					idx++;
+				}
+				var dp = idx === 0 ? 0 : idx === 1 ? 1 : 2;
+				return v.toFixed(dp) + " " + units[idx];
+			}
+
+			function collectIds() {
+				var nodes = qsa(".upload-status[data-upload-id]");
+				var ids = [];
+				for (var i = 0; i < nodes.length; i++) {
+					var id = parseInt(nodes[i].getAttribute("data-upload-id") || "0", 10) || 0;
+					if (id > 0) ids.push(id);
+				}
+				ids.sort(function (a, b) { return a - b; });
+				// uniq
+				var out = [];
+				for (var j = 0; j < ids.length; j++) {
+					if (j === 0 || ids[j] !== ids[j - 1]) out.push(ids[j]);
+				}
+				return out;
+			}
+
+			function applyStatus(el, u) {
+				if (!el) return;
+				var textEl = el.querySelector(".upload-status-text");
+				var pctEl = el.querySelector(".upload-status-pct");
+				var fill = el.querySelector(".upload-status-fill");
+				var meta = el.querySelector(".upload-status-meta");
+
+				var loaded = (u && u.bytesLoaded) || 0;
+				var total = (u && u.bytesTotal) || 0;
+				var status = (u && u.status) || "pending";
+
+				var pct = 0;
+				if (total > 0) pct = Math.max(0, Math.min(100, Math.round((loaded / total) * 100)));
+				if (status === "complete") pct = 100;
+
+				if (fill) fill.style.width = String(pct) + "%";
+				if (pctEl) pctEl.textContent = String(pct) + "%";
+				if (textEl) {
+					if (status === "complete") textEl.textContent = "Uploaded";
+					else if (status === "uploading") textEl.textContent = "Uploading…";
+					else if (status === "pending") textEl.textContent = "Starting upload…";
+					else textEl.textContent = status;
+				}
+				if (meta) {
+					if (u && u.error) meta.textContent = String(u.error);
+					else if (total > 0) meta.textContent = formatBytes(loaded) + " / " + formatBytes(total);
+					else if (loaded > 0) meta.textContent = formatBytes(loaded);
+					else meta.textContent = "";
+				}
+			}
+
+			async function tick() {
+				if (inflight) return;
+				var ids = collectIds();
+				if (!ids.length) {
+					if (timer) { clearInterval(timer); timer = null; }
+					lastIdsKey = "";
+					return;
+				}
+				inflight = true;
+				try {
+					var url = "/uploader/status?ids=" + encodeURIComponent(ids.join(","));
+					var res = await fetch(url, { headers: { "Accept": "application/json" }, credentials: "same-origin" });
+					if (!res.ok) return;
+					var data = await res.json();
+					var uploads = (data && data.uploads) || {};
+
+					var anyComplete = false;
+					for (var i = 0; i < ids.length; i++) {
+						var id = ids[i];
+						var nodes = qsa('.upload-status[data-upload-id="' + String(id) + '"]');
+						var u = uploads[String(id)] || uploads[id] || null;
+						for (var j = 0; j < nodes.length; j++) applyStatus(nodes[j], u);
+						if (u && u.status === "complete") anyComplete = true;
+					}
+
+					// Once anything completes, refresh soon so media appears.
+					if (anyComplete) {
+						setTimeout(function () {
+							try { window.location.reload(); } catch (e) {}
+						}, 800);
+					}
+				} catch (e) {
+					// ignore transient errors
+				} finally {
+					inflight = false;
+				}
+			}
+
+			function ensureRunning() {
+				var ids = collectIds();
+				var key = ids.join(",");
+				if (!ids.length) return;
+				if (!timer) {
+					tick();
+					timer = setInterval(tick, 1500);
+					lastIdsKey = key;
+					return;
+				}
+				// If set changed, tick immediately.
+				if (key !== lastIdsKey) {
+					lastIdsKey = key;
+					tick();
+				}
+			}
+
+			window.__dl_uploadPoller = { refresh: ensureRunning };
+			ensureRunning();
 		})();
 
 		// Pinned note "Copy Link"
@@ -1534,6 +1817,8 @@ function registerLogsReadRoutes(app, deps) {
 			});
 			const dates = Object.keys(grouped).sort((a, b) => b.localeCompare(a));
 
+			const LAZY_PLACEHOLDER_SRC =
+				"data:image/gif;base64,R0lGODlhAQABAAAAACH5BAEKAAEALAAAAAABAAEAAAICTAEAOw==";
 			const sectionsHtml = dates
 				.map((date) => {
 					const logs = grouped[date];
@@ -1546,30 +1831,46 @@ function registerLogsReadRoutes(app, deps) {
 					const logsHtml = logs
 						.map((log) => {
 							let mediaHtml = "";
+							let uploadHtml = "";
 							if (log.media_path) {
 								const safePath = escapeHtml(log.media_path);
 								if (log.media_type === "video") {
 									mediaHtml = `
 									<div class="media">
-										<video controls preload="metadata" class="media-element">
-											<source src="${safePath}">
-											Your browser does not support the video tag.
-										</video>
+											<video controls preload="none" class="media-element" data-src="${safePath}">
+												Your browser does not support the video tag.
+											</video>
 									</div>
 								`;
 								} else {
 									mediaHtml = `
 									<div class="media">
-										<img src="${safePath}" loading="lazy" class="media-element" alt="Log media">
+											<img src="${LAZY_PLACEHOLDER_SRC}" data-src="${safePath}" loading="lazy" decoding="async" class="media-element" alt="Log media">
 									</div>
 								`;
 								}
 							} else if (log.image_url) {
 								mediaHtml = `
 								<div class="media">
-									<img src="${escapeHtml(log.image_url)}" loading="lazy" class="media-element" alt="Log image">
+									<img src="${LAZY_PLACEHOLDER_SRC}" data-src="${escapeHtml(log.image_url)}" loading="lazy" decoding="async" class="media-element" alt="Log image">
 								</div>
 							`;
+							}
+
+							if (!log.media_path && log.media_upload_id) {
+								const uploadId = Number(log.media_upload_id) || 0;
+								if (uploadId > 0) {
+									uploadHtml = `
+									<div class="upload-status" data-upload-id="${uploadId}">
+										<div class="upload-status-row">
+											<span class="upload-status-text">Uploading…</span>
+											<span class="upload-status-pct">0%</span>
+										</div>
+										<div class="upload-status-bar"><div class="upload-status-fill"></div></div>
+										<div class="upload-status-meta"></div>
+									</div>
+								`;
+								}
 							}
 
 							const adminActions = admin
@@ -1591,12 +1892,17 @@ function registerLogsReadRoutes(app, deps) {
 								? '<span class="edited-badge">Edited</span>'
 								: "";
 
+							const uploadingBadge = (!log.media_path && log.media_upload_id)
+								? '<span class="uploading-badge">Uploading</span>'
+								: "";
+
 							return `
 								<article class="log-card">
 									<header class="log-header">
 										<div>
 											${usernameLabel}
 											${editedBadge}
+											${uploadingBadge}
 											<div class="hours-row">
 												<span class="hours-label">Hours</span>
 												<span class="hours-value">${log.hours}</span>
@@ -1607,6 +1913,7 @@ function registerLogsReadRoutes(app, deps) {
 									<div class="log-body">
 										${marked.parse(log.content || "")}
 										${mediaHtml}
+										${uploadHtml}
 									</div>
 									${adminActions}
 									<div class="log-footer">
@@ -1780,7 +2087,15 @@ function registerLogsWriteRoutes(app, deps) {
 				mediaType,
 				userNameForLog,
 			],
-			() => res.redirect("/")
+			function () {
+				const wantsJson =
+					(req.query && String(req.query.json) === "1") ||
+					String(req.get("accept") || "").includes("application/json");
+				if (wantsJson) {
+					return res.json({ logId: this && this.lastID ? this.lastID : null, redirectUrl: "/" });
+				}
+				return res.redirect("/");
+			}
 		);
 	});
 

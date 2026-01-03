@@ -1,6 +1,7 @@
 const express = require("express");
 const bodyParser = require("body-parser");
 const marked = require("marked");
+const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
 const bcrypt = require("bcryptjs");
@@ -24,14 +25,53 @@ const registerAdminRoutes = require("./admin");
 const registerPinnedRoutes = require("./pinned");
 const { registerLogsReadRoutes, registerLogsWriteRoutes } = require("./logs");
 const registerAdminCoreRoutes = require("./adminCore");
+const registerUploaderRoutes = require("./uploader");
 
 const app = express();
+
+const BUILD_ID = process.env.DL_BUILD_ID || new Date().toISOString();
+
+// Version markers for debugging client-side UI updates.
+app.use((req, res, next) => {
+	res.setHeader("X-DailyLogger-Build", BUILD_ID);
+	res.setHeader("X-Upload-UI-Version", BUILD_ID);
+	return next();
+});
+
+// Quick sanity endpoint to confirm which server instance you're hitting.
+app.get("/__version", (req, res) => {
+	res.json({
+		build: BUILD_ID,
+		uploadUiVersion: BUILD_ID,
+		pid: process.pid,
+		node: process.version,
+	});
+});
 
 // Ensure storage directories exist (repo-root, same as original behavior)
 if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 if (!fs.existsSync(backupsDir)) fs.mkdirSync(backupsDir, { recursive: true });
 
-app.use("/uploads", express.static(uploadDir));
+app.use(
+	"/uploads",
+	express.static(uploadDir, {
+		etag: true,
+		lastModified: true,
+		maxAge: "365d",
+		immutable: true,
+		setHeaders: (res) => {
+			res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+		},
+	})
+);
+
+// Avoid caching HTML/inline scripts so UI updates show up immediately.
+// Keep /uploads immutable caching intact.
+app.use((req, res, next) => {
+	if (req.path && String(req.path).startsWith("/uploads")) return next();
+	res.setHeader("Cache-Control", "no-store");
+	return next();
+});
 app.use(bodyParser.urlencoded({ extended: true }));
 
 // Settings (default password, admin setup, contact info)
@@ -84,6 +124,7 @@ registerPinnedRoutes(app, {
 	getCurrentUser,
 	isAdmin,
 	escapeHtml,
+	upload,
 });
 
 app.get("/policy", (req, res) => {
@@ -108,6 +149,15 @@ registerAuthRoutes(app, {
 	createSession,
 	destroyCurrentSession,
 	escapeHtml,
+});
+
+registerUploaderRoutes(app, {
+	db,
+	upload,
+	views,
+	escapeHtml,
+	getCurrentUser,
+	isAdmin,
 });
 
 registerLogsWriteRoutes(app, {
@@ -136,6 +186,25 @@ registerAdminRoutes(app, {
 	restoreFromBackup: (backupFilePath, cb) =>
 		restoreFromBackup({ db, DB_PATH, uploadDir }, backupFilePath, cb),
 	restartSelf,
+});
+
+// ---------- Upload error handling ----------
+app.use((err, req, res, next) => {
+	if (err && err instanceof multer.MulterError) {
+		if (err.code === "LIMIT_FILE_SIZE") {
+			const max = Number(process.env.UPLOAD_MAX_BYTES) || 4 * 1024 * 1024 * 1024;
+			res
+				.status(413)
+				.send(
+					`File too large. Max upload is ${Math.floor(max / (1024 * 1024))} MB. ` +
+						`Set UPLOAD_MAX_BYTES to increase the limit.`
+				);
+			return;
+		}
+		res.status(400).send(`Upload failed: ${err.message}`);
+		return;
+	}
+	next(err);
 });
 
 module.exports = app;
