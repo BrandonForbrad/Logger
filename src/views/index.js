@@ -3506,7 +3506,7 @@ function systemDetailPage(opts) {
   }).join('');
   
   const attachmentsList = attachments.map(att => `
-    <div class="attachment-item">
+    <div class="attachment-item" data-attachment-id="${att.id}">
       <a href="/uploads/${att.filename}" target="_blank" class="attachment-link">
         ${att.mime_type && att.mime_type.startsWith('image/') ? 
           `<img src="/uploads/${att.filename}" class="attachment-preview" alt="${escapeHtml(att.original_name)}">` :
@@ -3882,7 +3882,99 @@ function systemDetailPage(opts) {
         z-index: 1000;
       }
       .new-task-modal.active { display: flex; }
+      
+      /* Live collaboration styles */
+      .active-users {
+        position: fixed;
+        top: 70px;
+        right: 20px;
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 12px 16px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        z-index: 1000;
+        max-width: 250px;
+      }
+      .active-users-title {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        color: #64748b;
+        margin-bottom: 8px;
+      }
+      .active-user {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+        font-size: 13px;
+      }
+      .active-user .avatar {
+        width: 24px;
+        height: 24px;
+        font-size: 10px;
+      }
+      .active-user .editing-indicator {
+        font-size: 11px;
+        font-style: italic;
+        margin-left: 4px;
+      }
+      
+      /* Field editing indicator - floating badge above field */
+      .field-editor-badge {
+        position: absolute;
+        top: -28px;
+        left: 0;
+        display: flex;
+        gap: 6px;
+        z-index: 100;
+      }
+      .editor-badge {
+        padding: 4px 10px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        color: white;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        white-space: nowrap;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+        animation: badge-appear 0.2s ease-out;
+      }
+      .editor-badge::before {
+        content: '✎';
+        font-size: 10px;
+      }
+      @keyframes badge-appear {
+        from { opacity: 0; transform: translateY(4px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      
+      /* Border highlight for remote editing */
+      .remote-editing-border {
+        outline: 2px solid var(--editor-color, #3b82f6) !important;
+        outline-offset: 2px;
+      }
+      
+      .live-update-flash {
+        animation: flash-update 0.5s ease-out;
+      }
+      @keyframes flash-update {
+        0% { background-color: rgba(59, 130, 246, 0.2); }
+        100% { background-color: transparent; }
+      }
+      
+      .system-title, .system-description, .rich-editor-wrapper {
+        position: relative;
+        margin-top: 32px;
+      }
+      .rich-editor {
+        position: relative;
+      }
     </style>
+    <script src="/socket.io/socket.io.js"></script>
   </head>
   <body>
     <nav class="navbar">
@@ -3895,6 +3987,12 @@ function systemDetailPage(opts) {
         ${admin ? '<a href="/admin">Admin</a>' : ''}
       </div>
     </nav>
+    
+    <!-- Active Users Panel -->
+    <div class="active-users" id="activeUsersPanel" style="display: none;">
+      <div class="active-users-title">👥 Viewing this system</div>
+      <div id="activeUsersList"></div>
+    </div>
     
     <div class="container">
       <div style="margin-bottom: 16px;">
@@ -4072,6 +4170,14 @@ function systemDetailPage(opts) {
     <script>
       var systemId = ${system.id};
       
+      // Client-side escapeHtml function
+      function escapeHtml(str) {
+        if (!str) return '';
+        var div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+      }
+      
       function openNewTaskModal() {
         document.getElementById('newTaskModal').classList.add('active');
       }
@@ -4080,6 +4186,55 @@ function systemDetailPage(opts) {
       }
       document.getElementById('newTaskModal').addEventListener('click', function(e) {
         if (e.target === this) closeNewTaskModal();
+      });
+      
+      // Intercept form submission for live sync
+      document.getElementById('newTaskForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        var form = e.target;
+        var formData = new FormData(form);
+        
+        // Get selected assignees (checkboxes)
+        var assignees = [];
+        form.querySelectorAll('input[name="assigned_to"]:checked').forEach(function(cb) {
+          assignees.push(cb.value);
+        });
+        
+        var taskData = {
+          title: formData.get('title'),
+          description: formData.get('description'),
+          priority: formData.get('priority'),
+          due_date: formData.get('due_date'),
+          tags: formData.get('tags'),
+          assigned_to: assignees.join(',')
+        };
+        
+        try {
+          var response = await fetch('/api/systems/' + systemId + '/tasks', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(taskData)
+          });
+          
+          if (response.ok) {
+            var task = await response.json();
+            
+            // Add to our own DOM
+            addTaskToDOM(task);
+            
+            // Emit socket event for other clients
+            socket.emit('task-created', { room: room, task: task, username: currentUsername });
+            
+            // Close modal and reset form
+            closeNewTaskModal();
+            form.reset();
+          } else {
+            alert('Failed to create task');
+          }
+        } catch (err) {
+          console.error('Error creating task:', err);
+          alert('Error creating task');
+        }
       });
       
       // Rich Text Editor Functions
@@ -4329,6 +4484,13 @@ function systemDetailPage(opts) {
               document.removeEventListener('mousemove', onMouseMove);
               document.removeEventListener('mouseup', onMouseUp);
               autoSave();
+              // Emit content update for live sync
+              if (socket) {
+                var content = document.getElementById('systemContent');
+                if (content) {
+                  socket.emit('content-update', { room: room, field: 'systemContent', value: content.innerHTML, username: currentUsername });
+                }
+              }
             }
             
             document.addEventListener('mousemove', onMouseMove);
@@ -4363,7 +4525,13 @@ function systemDetailPage(opts) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ is_completed: completed })
           });
-          location.reload();
+          // Emit socket event for other clients
+          socket.emit('task-toggle', { room: room, taskId: taskId, completed: completed, username: currentUsername });
+          // Update our own DOM
+          var taskItem = document.querySelector('[data-task-id="' + taskId + '"]');
+          if (taskItem) {
+            taskItem.classList.toggle('completed', completed);
+          }
         } catch (e) {
           console.error('Error toggling task:', e);
         }
@@ -4373,10 +4541,88 @@ function systemDetailPage(opts) {
         if (!confirm('Delete this task?')) return;
         try {
           await fetch('/api/tasks/' + taskId, { method: 'DELETE' });
-          location.reload();
+          // Emit socket event for other clients
+          socket.emit('task-deleted', { room: room, taskId: taskId, username: currentUsername });
+          // Remove from DOM
+          var taskItem = document.querySelector('[data-task-id="' + taskId + '"]');
+          if (taskItem) {
+            taskItem.style.opacity = '0.5';
+            taskItem.style.textDecoration = 'line-through';
+            setTimeout(function() { taskItem.remove(); }, 300);
+          }
         } catch (e) {
           console.error('Error deleting task:', e);
         }
+      }
+      
+      // Helper function to escape HTML
+      function escapeHtml(text) {
+        if (!text) return '';
+        var div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+      }
+      
+      // Add task to DOM dynamically
+      function addTaskToDOM(task) {
+        var tasksList = document.querySelector('.tasks-list');
+        if (!tasksList) return;
+        
+        // Check if task already exists
+        if (document.querySelector('[data-task-id="' + task.id + '"]')) return;
+        
+        var priorityClasses = {
+          low: 'badge-gray',
+          medium: 'badge-blue',
+          high: 'badge-yellow',
+          urgent: 'badge-red'
+        };
+        var priorityClass = priorityClasses[task.priority || 'medium'];
+        
+        var isOverdue = task.due_date && !task.is_completed && new Date(task.due_date) < new Date();
+        
+        var taskTags = '';
+        if (task.tags) {
+          task.tags.split(',').forEach(function(t) {
+            taskTags += '<span class="tag" style="font-size: 10px;">' + escapeHtml(t.trim()) + '</span>';
+          });
+        }
+        
+        var assigneeAvatars = '';
+        if (task.assigned_to) {
+          task.assigned_to.split(',').forEach(function(a) {
+            var name = a.trim();
+            if (name) {
+              assigneeAvatars += '<span class="avatar" title="Assigned to ' + escapeHtml(name) + '">' + name.charAt(0).toUpperCase() + '</span>';
+            }
+          });
+        }
+        
+        var html = '<div class="task-item" data-task-id="' + task.id + '" draggable="true">' +
+          '<div class="drag-handle" title="Drag to reorder">⋮⋮</div>' +
+          '<div class="task-checkbox">' +
+            '<input type="checkbox" onchange="toggleTask(' + task.id + ', this.checked)">' +
+          '</div>' +
+          '<div class="task-content">' +
+            '<a href="/systems/' + systemId + '/tasks/' + task.id + '" class="task-title">' + escapeHtml(task.title) + '</a>' +
+            '<div class="task-meta">' +
+              '<span class="badge ' + priorityClass + '">' + (task.priority || 'medium') + '</span>' +
+              (assigneeAvatars ? '<div class="avatar-group">' + assigneeAvatars + '</div>' : '') +
+              (task.due_date ? '<span class="' + (isOverdue ? 'text-danger' : '') + '" style="font-size: 12px;' + (isOverdue ? ' color: #dc2626;' : '') + '">Due: ' + task.due_date + '</span>' : '') +
+              taskTags +
+            '</div>' +
+          '</div>' +
+          '<div class="task-actions">' +
+            '<button class="btn btn-icon btn-secondary btn-sm" onclick="deleteTask(' + task.id + ')" title="Delete">🗑</button>' +
+          '</div>' +
+        '</div>';
+        
+        // Add to bottom of list
+        tasksList.insertAdjacentHTML('beforeend', html);
+        
+        // Flash animation
+        var newItem = document.querySelector('[data-task-id="' + task.id + '"]');
+        if (newItem) flashElement(newItem);
       }
       
       // Drag and drop reordering for tasks
@@ -4451,12 +4697,17 @@ function systemDetailPage(opts) {
             return parseInt(item.dataset.taskId);
           });
           
+          console.log('Saving task order:', taskIds);
+          
           try {
             await fetch('/api/systems/' + systemId + '/tasks/reorder', {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({ taskIds: taskIds })
             });
+            console.log('Dispatching tasksReordered event');
+            // Dispatch custom event for socket emit (socket defined later)
+            window.dispatchEvent(new CustomEvent('tasksReordered', { detail: { taskIds: taskIds } }));
           } catch (e) {
             console.error('Error saving task order:', e);
           }
@@ -4477,7 +4728,25 @@ function systemDetailPage(opts) {
         if (!confirm('Delete this attachment?')) return;
         try {
           await fetch('/api/attachments/' + attId, { method: 'DELETE' });
-          location.reload();
+          // Emit socket event
+          if (socket) {
+            socket.emit('attachment-delete', { room: room, attachmentId: attId, username: currentUsername });
+          }
+          // Remove from DOM
+          var item = document.querySelector('[data-attachment-id="' + attId + '"]');
+          if (item) {
+            item.style.transition = 'opacity 0.3s';
+            item.style.opacity = '0';
+            setTimeout(function() {
+              item.remove();
+              // Update count
+              var countHeader = document.querySelector('.section-title');
+              if (countHeader && countHeader.textContent.includes('Attachments')) {
+                var count = document.querySelectorAll('.attachment-item').length;
+                countHeader.textContent = '\ud83d\udcce Attachments (' + count + ')';
+              }
+            }, 300);
+          }
         } catch (e) {
           console.error('Error deleting attachment:', e);
         }
@@ -4513,6 +4782,254 @@ function systemDetailPage(opts) {
           console.error('Error uploading files:', e);
         }
       }
+      
+      // ============ LIVE COLLABORATION ============
+      var socket = io();
+      var room = 'system:' + systemId;
+      var currentUsername = '${currentUser || "Anonymous"}';
+      var mySocketId = null;
+      var updateDebounceTimers = {};
+      var activeEditors = {}; // Track who's editing what field
+      var isSendingUpdate = false;
+      
+      socket.on('connect', function() {
+        console.log('Connected to live updates');
+        mySocketId = socket.id;
+        socket.emit('join', { room: room, username: currentUsername });
+      });
+      
+      // Listen for task reorder events from the drag/drop IIFE
+      window.addEventListener('tasksReordered', function(e) {
+        console.log('Emitting tasks-reordered:', e.detail.taskIds);
+        socket.emit('tasks-reordered', { room: room, taskIds: e.detail.taskIds, username: currentUsername });
+      });
+      
+      function flashElement(el) {
+        if (!el) return;
+        el.classList.add('live-update-flash');
+        setTimeout(function() { el.classList.remove('live-update-flash'); }, 500);
+      }
+      
+      function applyRemoteUpdate(field, value) {
+        var isActive = document.activeElement === field;
+        var cursorPos = 0;
+        var scrollTop = field.scrollTop;
+        
+        // Save cursor position if we're actively editing
+        if (isActive) {
+          if (field.tagName === 'INPUT' || field.tagName === 'TEXTAREA') {
+            cursorPos = field.selectionStart || 0;
+          } else if (field.contentEditable === 'true') {
+            var sel = window.getSelection();
+            if (sel.rangeCount > 0) {
+              var range = sel.getRangeAt(0);
+              cursorPos = range.startOffset;
+            }
+          }
+        }
+        
+        if (field.tagName === 'INPUT' || field.tagName === 'TEXTAREA') {
+          if (field.value !== value) {
+            field.value = value;
+            if (!isActive) flashElement(field);
+            // Restore cursor
+            if (isActive) {
+              var newPos = Math.min(cursorPos, value.length);
+              field.setSelectionRange(newPos, newPos);
+            }
+          }
+        } else if (field.contentEditable === 'true') {
+          if (field.innerHTML !== value) {
+            field.innerHTML = value;
+            if (!isActive) flashElement(field);
+            // Restore cursor position in contenteditable
+            if (isActive && field.childNodes.length > 0) {
+              try {
+                var sel = window.getSelection();
+                var range = document.createRange();
+                var textNode = field.childNodes[0];
+                if (textNode && textNode.nodeType === Node.TEXT_NODE) {
+                  var newPos = Math.min(cursorPos, textNode.length);
+                  range.setStart(textNode, newPos);
+                  range.collapse(true);
+                  sel.removeAllRanges();
+                  sel.addRange(range);
+                }
+              } catch(e) { /* cursor restore failed, that's ok */ }
+            }
+          }
+        }
+        
+        // Restore scroll position
+        field.scrollTop = scrollTop;
+      }
+      
+      // Active users updated
+      socket.on('users-updated', function(data) {
+        var panel = document.getElementById('activeUsersPanel');
+        var list = document.getElementById('activeUsersList');
+        var users = (data.users || []).filter(function(u) { return u.socketId !== mySocketId; });
+        
+        if (users.length > 0) {
+          panel.style.display = 'block';
+          list.innerHTML = users.map(function(u) {
+            var color = u.color || '#3b82f6';
+            var editingField = u.editing || '';
+            var editingText = editingField ? '<span class="editing-indicator" style="color:' + color + '"> — editing</span>' : '';
+            return '<div class="active-user"><span class="avatar" style="background:' + color + '">' + u.username.charAt(0).toUpperCase() + '</span> ' + u.username + editingText + '</div>';
+          }).join('');
+        } else {
+          panel.style.display = 'none';
+        }
+      });
+      
+      // Someone started editing a field
+      socket.on('user-editing', function(data) {
+        if (data.socketId === mySocketId) return;
+        activeEditors[data.field] = activeEditors[data.field] || {};
+        activeEditors[data.field][data.socketId] = { username: data.username, color: data.color, socketId: data.socketId };
+        updateFieldIndicators(data.field);
+      });
+      
+      // Someone stopped editing
+      socket.on('user-stopped-editing', function(data) {
+        if (data.socketId === mySocketId) return;
+        if (activeEditors[data.field]) {
+          delete activeEditors[data.field][data.socketId];
+        }
+        updateFieldIndicators(data.field);
+      });
+      
+      // Update field indicators (badges and border)
+      function updateFieldIndicators(fieldId) {
+        var field = document.getElementById(fieldId);
+        if (!field) return;
+        
+        var wrapper = field.closest('.rich-editor-wrapper, .system-title, .system-description');
+        if (!wrapper) wrapper = field.parentElement;
+        wrapper.style.position = 'relative';
+        
+        var editors = activeEditors[fieldId] || {};
+        var editorList = Object.values(editors);
+        
+        var badgeContainer = wrapper.querySelector('.field-editor-badge');
+        
+        if (editorList.length === 0) {
+          if (badgeContainer) badgeContainer.remove();
+          field.classList.remove('remote-editing-border');
+          field.style.removeProperty('--editor-color');
+          return;
+        }
+        
+        if (!badgeContainer) {
+          badgeContainer = document.createElement('div');
+          badgeContainer.className = 'field-editor-badge';
+          wrapper.appendChild(badgeContainer);
+        }
+        
+        badgeContainer.innerHTML = editorList.map(function(e) {
+          return '<span class="editor-badge" style="background:' + (e.color || '#3b82f6') + '">' + e.username + '</span>';
+        }).join('');
+        
+        var firstEditor = editorList[0];
+        field.classList.add('remote-editing-border');
+        field.style.setProperty('--editor-color', firstEditor.color || '#3b82f6');
+      }
+      
+      // Task toggled by another user
+      socket.on('task-toggled', function(data) {
+        var taskItem = document.querySelector('[data-task-id="' + data.taskId + '"]');
+        if (taskItem) {
+          var checkbox = taskItem.querySelector('input[type="checkbox"]');
+          if (checkbox) checkbox.checked = data.completed;
+          taskItem.classList.toggle('completed', data.completed);
+          flashElement(taskItem);
+        }
+      });
+      
+      // Task added by another user
+      socket.on('task-added', function(data) {
+        addTaskToDOM(data.task);
+      });
+      
+      // Task removed by another user
+      socket.on('task-removed', function(data) {
+        var taskItem = document.querySelector('[data-task-id="' + data.taskId + '"]');
+        if (taskItem) {
+          taskItem.style.opacity = '0.5';
+          taskItem.style.textDecoration = 'line-through';
+          setTimeout(function() { taskItem.remove(); }, 300);
+        }
+      });
+      
+      // Tasks reordered by another user
+      socket.on('tasks-order-changed', function(data) {
+        console.log('Received tasks-order-changed:', data);
+        var tasksList = document.querySelector('.tasks-list');
+        if (tasksList && data.taskIds) {
+          data.taskIds.forEach(function(id) {
+            var item = tasksList.querySelector('[data-task-id="' + id + '"]');
+            if (item) tasksList.appendChild(item);
+          });
+          flashElement(tasksList);
+        }
+      });
+      
+      // Content changed by another user
+      socket.on('content-changed', function(data) {
+        if (data.fromSocketId === mySocketId) return;
+        
+        var field = document.getElementById(data.field);
+        if (!field) return;
+        
+        // Don't accept null/undefined updates
+        if (data.value === null || data.value === undefined) return;
+        
+        // Always apply remote updates immediately to keep clients in sync
+        applyRemoteUpdate(field, data.value);
+      });
+      
+      // Setup editing tracking for system fields
+      function setupSystemEditingTracking() {
+        var fields = ['systemName', 'systemDescription', 'systemContent'];
+        
+        fields.forEach(function(fieldId) {
+          var field = document.getElementById(fieldId);
+          if (!field) return;
+          
+          field.addEventListener('focus', function() {
+            socket.emit('editing-start', { room: room, field: fieldId, username: currentUsername });
+          });
+          
+          field.addEventListener('blur', function() {
+            socket.emit('editing-stop', { room: room, field: fieldId, username: currentUsername });
+          });
+          
+          field.addEventListener('input', function() {
+            if (isSendingUpdate) return;
+            
+            clearTimeout(updateDebounceTimers[fieldId]);
+            updateDebounceTimers[fieldId] = setTimeout(function() {
+              var value;
+              if (field.tagName === 'INPUT' || field.tagName === 'TEXTAREA') {
+                value = field.value;
+              } else {
+                value = field.innerHTML;
+              }
+              
+              isSendingUpdate = true;
+              socket.emit('content-update', { room: room, field: fieldId, value: value, username: currentUsername });
+              isSendingUpdate = false;
+            }, 100); // Fast debounce
+          });
+        });
+      }
+      
+      setupSystemEditingTracking();
+      
+      socket.on('disconnect', function() {
+        console.log('Disconnected from live updates');
+      });
     </script>
   </body>
   </html>
@@ -4555,7 +5072,7 @@ function taskDetailPage(opts) {
   `).join('');
   
   const attachmentsList = (attachments || []).map(att => `
-    <div class="attachment-item">
+    <div class="attachment-item" data-attachment-id="${att.id}">
       <a href="/uploads/${att.filename}" target="_blank" class="attachment-link">
         ${att.mime_type && att.mime_type.startsWith('image/') ? 
           `<img src="/uploads/${att.filename}" class="attachment-preview" alt="${escapeHtml(att.original_name)}">` :
@@ -4882,10 +5399,103 @@ function taskDetailPage(opts) {
       }
       .upload-zone:hover { border-color: #2563eb; background: #f8fafc; }
       
+      /* Live collaboration styles */
+      .active-users {
+        position: fixed;
+        top: 70px;
+        right: 20px;
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 12px 16px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        z-index: 1000;
+        max-width: 250px;
+      }
+      .active-users-title {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        color: #64748b;
+        margin-bottom: 8px;
+      }
+      .active-user {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 4px 0;
+        font-size: 13px;
+      }
+      .active-user .avatar {
+        width: 24px;
+        height: 24px;
+        font-size: 10px;
+      }
+      .active-user .editing-indicator {
+        font-size: 11px;
+        font-style: italic;
+        margin-left: 4px;
+      }
+      
+      /* Field editing indicator - floating badge above field */
+      .field-editor-badge {
+        position: absolute;
+        top: -28px;
+        left: 0;
+        display: flex;
+        gap: 6px;
+        z-index: 100;
+      }
+      .editor-badge {
+        padding: 4px 10px;
+        border-radius: 4px;
+        font-size: 11px;
+        font-weight: 600;
+        color: white;
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        white-space: nowrap;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.2);
+        animation: badge-appear 0.2s ease-out;
+      }
+      .editor-badge::before {
+        content: '✎';
+        font-size: 10px;
+      }
+      @keyframes badge-appear {
+        from { opacity: 0; transform: translateY(4px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      
+      /* Border highlight for remote editing */
+      .remote-editing-border {
+        outline: 2px solid var(--editor-color, #3b82f6) !important;
+        outline-offset: 2px;
+      }
+      
+      .live-update-flash {
+        animation: flash-update 0.5s ease-out;
+      }
+      @keyframes flash-update {
+        0% { background-color: rgba(59, 130, 246, 0.2); }
+        100% { background-color: transparent; }
+      }
+      
+      /* Rich editor and editable fields need relative positioning and margin for badges */
+      .rich-editor-wrapper, .task-title, .task-description {
+        position: relative;
+        margin-top: 32px;
+      }
+      .rich-editor {
+        position: relative;
+      }
+      
       ${task.is_completed ? `
         .task-header { border-left: 5px solid #22c55e; }
       ` : ''}
     </style>
+    <script src="/socket.io/socket.io.js"></script>
   </head>
   <body>
     <nav class="navbar">
@@ -4898,6 +5508,12 @@ function taskDetailPage(opts) {
         ${admin ? '<a href="/admin">Admin</a>' : ''}
       </div>
     </nav>
+    
+    <!-- Active Users Panel -->
+    <div class="active-users" id="activeUsersPanel" style="display: none;">
+      <div class="active-users-title">👥 Viewing this task</div>
+      <div id="activeUsersList"></div>
+    </div>
     
     <div class="container">
       <div style="margin-bottom: 16px; display: flex; gap: 8px;">
@@ -5060,6 +5676,14 @@ function taskDetailPage(opts) {
     <script>
       var systemId = ${system.id};
       var taskId = ${task.id};
+      
+      // Client-side escapeHtml function
+      function escapeHtml(str) {
+        if (!str) return '';
+        var div = document.createElement('div');
+        div.textContent = str;
+        return div.innerHTML;
+      }
       
       function toggleAssigneeDropdown(event) {
         if (event) event.stopPropagation();
@@ -5289,6 +5913,13 @@ function taskDetailPage(opts) {
               document.removeEventListener('mousemove', onMouseMove);
               document.removeEventListener('mouseup', onMouseUp);
               autoSave();
+              // Emit content update for live sync
+              if (socket) {
+                var content = document.getElementById('taskContent');
+                if (content) {
+                  socket.emit('content-update', { room: room, field: 'taskContent', value: content.innerHTML, username: currentUsername });
+                }
+              }
             }
             
             document.addEventListener('mousemove', onMouseMove);
@@ -5353,16 +5984,69 @@ function taskDetailPage(opts) {
         var title = input.value.trim();
         if (!title) return;
         try {
-          await fetch('/api/tasks/' + taskId + '/checklist', {
+          var response = await fetch('/api/tasks/' + taskId + '/checklist', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ title: title })
           });
+          var item = await response.json();
+          console.log('Checklist item added:', item);
           input.value = '';
-          location.reload();
-        } catch (e) {
-          console.error('Error adding checklist item:', e);
+          
+          // Add item to DOM dynamically
+          addChecklistItemToDOM(item);
+          
+          // Emit socket event
+          console.log('Socket status:', socket ? 'connected' : 'null');
+          if (socket) {
+            socket.emit('checklist-add', { room: room, item: item, username: currentUsername });
+          }
+        } catch (err) {
+          console.error('Error adding checklist item:', err);
         }
+      }
+      
+      function addChecklistItemToDOM(item) {
+        console.log('addChecklistItemToDOM called with:', item);
+        var container = document.querySelector('.checklist-items');
+        console.log('Found container:', container);
+        if (!container) {
+          // Create container if it doesn't exist - find the form and insert before it
+          var form = document.querySelector('.add-checklist-form');
+          console.log('Found form:', form);
+          if (!form) return;
+          var sectionBody = form.parentElement;
+          if (!sectionBody) return;
+          // Remove "No checklist items yet" message if present
+          var noItems = sectionBody.querySelector('p');
+          if (noItems && noItems.textContent.includes('No checklist')) noItems.remove();
+          container = document.createElement('div');
+          container.className = 'checklist-items';
+          sectionBody.insertBefore(container, form);
+          console.log('Created new container:', container);
+        }
+        
+        var div = document.createElement('div');
+        div.className = 'checklist-item';
+        div.setAttribute('data-item-id', item.id);
+        div.innerHTML = '<input type="checkbox" onchange="toggleChecklistItem(' + item.id + ', this.checked)">' +
+          '<span class="checklist-title">' + escapeHtml(item.title) + '</span>' +
+          '<button class="btn btn-icon btn-sm" onclick="deleteChecklistItem(' + item.id + ')" style="opacity: 0.5;">&times;</button>';
+        container.appendChild(div);
+        flashElement(div);
+        
+        // Update count in header
+        updateChecklistCount();
+      }
+      
+      function updateChecklistCount() {
+        var count = document.querySelectorAll('.checklist-item').length;
+        var headers = document.querySelectorAll('.section-title');
+        headers.forEach(function(h) {
+          if (h.textContent.includes('Checklist')) {
+            h.textContent = '☑️ Checklist (' + count + ')';
+          }
+        });
       }
       
       async function toggleChecklistItem(itemId, completed) {
@@ -5372,7 +6056,16 @@ function taskDetailPage(opts) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ is_completed: completed })
           });
-          location.reload();
+          // Emit socket event
+          if (socket) {
+            socket.emit('checklist-toggle', { room: room, itemId: itemId, completed: completed, username: currentUsername });
+          }
+          // Update UI
+          var item = document.querySelector('[data-item-id="' + itemId + '"]');
+          if (item) {
+            var title = item.querySelector('.checklist-title');
+            if (title) title.classList.toggle('completed', completed);
+          }
         } catch (e) {
           console.error('Error toggling checklist item:', e);
         }
@@ -5381,7 +6074,20 @@ function taskDetailPage(opts) {
       async function deleteChecklistItem(itemId) {
         try {
           await fetch('/api/checklist/' + itemId, { method: 'DELETE' });
-          location.reload();
+          // Emit socket event
+          if (socket) {
+            socket.emit('checklist-delete', { room: room, itemId: itemId, username: currentUsername });
+          }
+          // Remove from DOM
+          var item = document.querySelector('[data-item-id="' + itemId + '"]');
+          if (item) {
+            item.style.transition = 'opacity 0.3s';
+            item.style.opacity = '0';
+            setTimeout(function() {
+              item.remove();
+              updateChecklistCount();
+            }, 300);
+          }
         } catch (e) {
           console.error('Error deleting checklist item:', e);
         }
@@ -5391,7 +6097,25 @@ function taskDetailPage(opts) {
         if (!confirm('Delete this attachment?')) return;
         try {
           await fetch('/api/attachments/' + attId, { method: 'DELETE' });
-          location.reload();
+          // Emit socket event
+          if (socket) {
+            socket.emit('attachment-delete', { room: room, attachmentId: attId, username: currentUsername });
+          }
+          // Remove from DOM
+          var item = document.querySelector('[data-attachment-id="' + attId + '"]');
+          if (item) {
+            item.style.transition = 'opacity 0.3s';
+            item.style.opacity = '0';
+            setTimeout(function() {
+              item.remove();
+              // Update count
+              var countHeader = document.querySelector('.section-title');
+              if (countHeader && countHeader.textContent.includes('Attachments')) {
+                var count = document.querySelectorAll('.attachment-item').length;
+                countHeader.textContent = '\ud83d\udcce Attachments (' + count + ')';
+              }
+            }, 300);
+          }
         } catch (e) {
           console.error('Error deleting attachment:', e);
         }
@@ -5418,15 +6142,403 @@ function taskDetailPage(opts) {
           formData.append('files', files[i]);
         }
         try {
-          await fetch('/api/tasks/' + taskId + '/attachments', {
+          console.log('Uploading files...');
+          var response = await fetch('/api/tasks/' + taskId + '/attachments', {
             method: 'POST',
             body: formData
           });
-          location.reload();
-        } catch (e) {
-          console.error('Error uploading files:', e);
+          var attachments = await response.json();
+          console.log('Upload response:', attachments);
+          // Add attachments to DOM dynamically
+          if (attachments && attachments.length > 0) {
+            attachments.forEach(function(att) {
+              console.log('Adding attachment to DOM:', att);
+              addAttachmentToDOM(att);
+              // Notify other users
+              console.log('Socket status for attachment:', socket ? 'connected' : 'null');
+              if (socket) {
+                socket.emit('attachment-add', { room: room, attachment: att, username: currentUsername });
+              }
+            });
+          }
+        } catch (err) {
+          console.error('Error uploading files:', err);
         }
       }
+      
+      function addAttachmentToDOM(att) {
+        console.log('addAttachmentToDOM called with:', att);
+        var grid = document.querySelector('.attachments-grid');
+        console.log('Found grid:', grid);
+        if (!grid) {
+          // Create grid if it doesn't exist - find uploadZone and insert before it
+          var uploadZone = document.getElementById('uploadZone');
+          if (!uploadZone) return;
+          var sectionBody = uploadZone.parentElement;
+          if (!sectionBody) return;
+          grid = document.createElement('div');
+          grid.className = 'attachments-grid';
+          grid.style.marginBottom = '16px';
+          sectionBody.insertBefore(grid, uploadZone);
+        }
+        
+        var div = document.createElement('div');
+        div.className = 'attachment-item';
+        div.setAttribute('data-attachment-id', att.id);
+        
+        var preview = '';
+        if (att.mime_type && att.mime_type.startsWith('image/')) {
+          preview = '<img src="/uploads/' + att.filename + '" class="attachment-preview" alt="' + escapeHtml(att.original_name) + '">';
+        } else if (att.mime_type && att.mime_type.startsWith('video/')) {
+          preview = '<video src="/uploads/' + att.filename + '" class="attachment-preview"></video>';
+        } else {
+          preview = '<div class="attachment-icon">\ud83d\udcce</div>';
+        }
+        
+        div.innerHTML = '<a href="/uploads/' + att.filename + '" target="_blank" class="attachment-link">' +
+          preview +
+          '<span class="attachment-name">' + escapeHtml(att.original_name) + '</span>' +
+          '</a>' +
+          '<button class="btn btn-icon btn-danger btn-sm" onclick="deleteAttachment(' + att.id + ')">\ud83d\uddd1</button>';
+        
+        grid.appendChild(div);
+        
+        // Flash to show it was added
+        flashElement(div);
+        
+        // Update count in header
+        updateAttachmentCount();
+      }
+      
+      function updateAttachmentCount() {
+        var count = document.querySelectorAll('.attachment-item').length;
+        var headers = document.querySelectorAll('.section-title');
+        headers.forEach(function(h) {
+          if (h.textContent.includes('Attachments')) {
+            h.textContent = '\ud83d\udcce Attachments (' + count + ')';
+          }
+        });
+      }
+      
+      // ============ LIVE COLLABORATION ============
+      var socket = null;
+      var room = 'task:' + taskId;
+      var currentUsername = '${currentUser || "Anonymous"}';
+      var mySocketId = null;
+      var updateDebounceTimers = {};
+      var activeEditors = {}; // Track who's editing what field
+      var isSendingUpdate = false;
+      
+      function initSocket() {
+        socket = io();
+        
+        socket.on('connect', function() {
+          console.log('Connected to live updates');
+          mySocketId = socket.id;
+          socket.emit('join', { room: room, username: currentUsername });
+        });
+        
+        // Active users updated
+        socket.on('users-updated', function(data) {
+          var panel = document.getElementById('activeUsersPanel');
+          var list = document.getElementById('activeUsersList');
+          var users = (data.users || []).filter(function(u) { return u.socketId !== mySocketId; });
+          
+          if (users.length > 0) {
+            panel.style.display = 'block';
+            list.innerHTML = users.map(function(u) {
+              var color = u.color || '#3b82f6';
+              var editingField = u.editing || '';
+              var editingText = editingField ? '<span class="editing-indicator" style="color:' + color + '"> — editing</span>' : '';
+              return '<div class="active-user"><span class="avatar" style="background:' + color + '">' + u.username.charAt(0).toUpperCase() + '</span> ' + u.username + editingText + '</div>';
+            }).join('');
+          } else {
+            panel.style.display = 'none';
+          }
+        });
+        
+        // Someone started editing a field
+        socket.on('user-editing', function(data) {
+          if (data.socketId === mySocketId) return;
+          activeEditors[data.field] = activeEditors[data.field] || {};
+          activeEditors[data.field][data.socketId] = { username: data.username, color: data.color, socketId: data.socketId };
+          updateFieldIndicators(data.field);
+        });
+        
+        // Someone stopped editing
+        socket.on('user-stopped-editing', function(data) {
+          if (data.socketId === mySocketId) return;
+          if (activeEditors[data.field]) {
+            delete activeEditors[data.field][data.socketId];
+          }
+          updateFieldIndicators(data.field);
+        });
+        
+        // Content changed by another user
+        socket.on('content-changed', function(data) {
+          if (data.fromSocketId === mySocketId) return;
+          
+          var field = document.getElementById(data.field);
+          if (!field) return;
+          
+          // Don't accept empty/null updates
+          if (data.value === null || data.value === undefined) return;
+          
+          // Always apply remote updates immediately to keep clients in sync
+          applyRemoteUpdate(field, data.value);
+        });
+        
+        // Property changed (priority, assignees, due date)
+        socket.on('property-changed', function(data) {
+          if (data.fromSocketId === mySocketId) return;
+          
+          if (data.property === 'priority') {
+            var sel = document.getElementById('taskPriority');
+            if (sel && document.activeElement !== sel) {
+              sel.value = data.value;
+              flashElement(sel);
+            }
+          } else if (data.property === 'assigned_to') {
+            var assignees = data.value ? data.value.split(',').map(function(a) { return a.trim(); }) : [];
+            document.querySelectorAll('.assignee-checkbox').forEach(function(cb) {
+              cb.checked = assignees.includes(cb.value);
+            });
+            updateAssigneeAvatars(assignees);
+          } else if (data.property === 'due_date') {
+            var dateInput = document.getElementById('taskDueDate');
+            if (dateInput && document.activeElement !== dateInput) {
+              dateInput.value = data.value || '';
+              flashElement(dateInput);
+            }
+          } else if (data.property === 'is_completed') {
+            var cb = document.getElementById('taskCompleted');
+            if (cb) cb.checked = data.value;
+            flashElement(document.querySelector('.task-header'));
+          }
+        });
+        
+        // Checklist item toggled
+        socket.on('checklist-toggled', function(data) {
+          var item = document.querySelector('[data-item-id="' + data.itemId + '"]');
+          if (item) {
+            var checkbox = item.querySelector('input[type="checkbox"]');
+            var title = item.querySelector('.checklist-title');
+            if (checkbox) checkbox.checked = data.completed;
+            if (title) title.classList.toggle('completed', data.completed);
+            flashElement(item);
+          }
+        });
+        
+        // Checklist item added/deleted
+        socket.on('checklist-added', function(data) {
+          addChecklistItemToDOM(data.item);
+        });
+        socket.on('checklist-deleted', function(data) {
+          var item = document.querySelector('[data-item-id="' + data.itemId + '"]');
+          if (item) {
+            item.style.transition = 'opacity 0.3s';
+            item.style.opacity = '0';
+            setTimeout(function() {
+              item.remove();
+              updateChecklistCount();
+            }, 300);
+          }
+        });
+        
+        // Attachments
+        socket.on('attachment-added', function(data) {
+          addAttachmentToDOM(data.attachment);
+        });
+        socket.on('attachment-deleted', function(data) {
+          var item = document.querySelector('[data-attachment-id="' + data.attachmentId + '"]');
+          if (item) {
+            item.style.transition = 'opacity 0.3s';
+            item.style.opacity = '0';
+            setTimeout(function() {
+              item.remove();
+              updateAttachmentCount();
+            }, 300);
+          }
+        });
+        
+        socket.on('disconnect', function() {
+          console.log('Disconnected from live updates');
+        });
+      }
+      
+      function flashElement(el) {
+        if (!el) return;
+        el.classList.add('live-update-flash');
+        setTimeout(function() { el.classList.remove('live-update-flash'); }, 500);
+      }
+      
+      function applyRemoteUpdate(field, value) {
+        if (field.tagName === 'INPUT' || field.tagName === 'TEXTAREA') {
+          if (field.value !== value) {
+            field.value = value;
+            flashElement(field);
+          }
+        } else if (field.contentEditable === 'true') {
+          if (field.innerHTML !== value) {
+            field.innerHTML = value;
+            flashElement(field);
+          }
+        }
+      }
+      
+      // Update assignee avatars display
+      function updateAssigneeAvatars(assignees) {
+        var wrapper = document.querySelector('.multi-assignee-wrapper');
+        if (!wrapper) return;
+        var avatarGroup = wrapper.querySelector('.avatar-group');
+        if (!avatarGroup && assignees.length > 0) {
+          avatarGroup = document.createElement('div');
+          avatarGroup.className = 'avatar-group';
+          wrapper.insertBefore(avatarGroup, wrapper.firstChild);
+        }
+        if (avatarGroup) {
+          if (assignees.length > 0) {
+            avatarGroup.innerHTML = assignees.map(function(a) {
+              return '<span class="avatar" title="' + a + '">' + a.charAt(0).toUpperCase() + '</span>';
+            }).join('');
+          } else {
+            avatarGroup.innerHTML = '<span style="color: #94a3b8; font-size: 13px;">Unassigned</span>';
+          }
+        }
+      }
+      
+      // Update field indicators (badges and border)
+      function updateFieldIndicators(fieldId) {
+        var field = document.getElementById(fieldId);
+        if (!field) return;
+        
+        var wrapper = field.closest('.task-title, .task-description, .rich-editor-wrapper');
+        if (!wrapper) wrapper = field.parentElement;
+        wrapper.style.position = 'relative';
+        
+        var editors = activeEditors[fieldId] || {};
+        var editorList = Object.values(editors);
+        
+        var badgeContainer = wrapper.querySelector('.field-editor-badge');
+        
+        if (editorList.length === 0) {
+          if (badgeContainer) badgeContainer.remove();
+          field.classList.remove('remote-editing-border');
+          field.style.removeProperty('--editor-color');
+          return;
+        }
+        
+        if (!badgeContainer) {
+          badgeContainer = document.createElement('div');
+          badgeContainer.className = 'field-editor-badge';
+          wrapper.appendChild(badgeContainer);
+        }
+        
+        badgeContainer.innerHTML = editorList.map(function(e) {
+          return '<span class="editor-badge" style="background:' + (e.color || '#3b82f6') + '">' + e.username + '</span>';
+        }).join('');
+        
+        var firstEditor = editorList[0];
+        field.classList.add('remote-editing-border');
+        field.style.setProperty('--editor-color', firstEditor.color || '#3b82f6');
+      }
+      
+      // Track focus/blur for editing indication
+      function setupEditingTracking() {
+        var fields = ['taskTitle', 'taskDescription', 'taskContent'];
+        
+        fields.forEach(function(fieldId) {
+          var field = document.getElementById(fieldId);
+          if (!field) return;
+          
+          // Focus - start editing
+          field.addEventListener('focus', function() {
+            if (socket) socket.emit('editing-start', { room: room, field: fieldId, username: currentUsername });
+          });
+          
+          // Blur - stop editing
+          field.addEventListener('blur', function() {
+            if (socket) socket.emit('editing-stop', { room: room, field: fieldId, username: currentUsername });
+          });
+          
+          // Content changes with debounce
+          field.addEventListener('input', function() {
+            if (isSendingUpdate) return;
+            
+            clearTimeout(updateDebounceTimers[fieldId]);
+            updateDebounceTimers[fieldId] = setTimeout(function() {
+              var value;
+              if (field.tagName === 'INPUT' || field.tagName === 'TEXTAREA') {
+                value = field.value;
+              } else {
+                value = field.innerHTML;
+              }
+              
+              if (socket) {
+                isSendingUpdate = true;
+                socket.emit('content-update', { 
+                  room: room, 
+                  field: fieldId, 
+                  value: value, 
+                  username: currentUsername 
+                });
+                isSendingUpdate = false;
+              }
+            }, 100); // Fast debounce for responsive updates
+          });
+        });
+      }
+      
+      // Override updateTask to emit socket events
+      var originalUpdateTask = updateTask;
+      updateTask = async function() {
+        await originalUpdateTask();
+        
+        if (!socket) return;
+        
+        var priority = document.getElementById('taskPriority').value;
+        var dueDate = document.getElementById('taskDueDate').value;
+        var assignees = [];
+        document.querySelectorAll('.assignee-checkbox:checked').forEach(function(cb) {
+          assignees.push(cb.value);
+        });
+        
+        socket.emit('property-update', { room: room, property: 'priority', value: priority, username: currentUsername });
+        socket.emit('property-update', { room: room, property: 'due_date', value: dueDate, username: currentUsername });
+        socket.emit('property-update', { room: room, property: 'assigned_to', value: assignees.join(','), username: currentUsername });
+      };
+      
+      // Override toggleCompleted
+      var originalToggleCompleted = toggleCompleted;
+      toggleCompleted = async function(completed) {
+        if (socket) socket.emit('property-update', { room: room, property: 'is_completed', value: completed, username: currentUsername });
+        await originalToggleCompleted(completed);
+      };
+      
+      // Override toggleChecklistItem
+      var originalToggleChecklistItem = toggleChecklistItem;
+      toggleChecklistItem = async function(itemId, completed) {
+        if (socket) socket.emit('checklist-toggle', { room: room, itemId: itemId, completed: completed, username: currentUsername });
+        await originalToggleChecklistItem(itemId, completed);
+      };
+      
+      // Override deleteChecklistItem
+      var originalDeleteChecklistItem = deleteChecklistItem;
+      deleteChecklistItem = async function(itemId) {
+        if (socket) socket.emit('checklist-delete', { room: room, itemId: itemId, username: currentUsername });
+        await originalDeleteChecklistItem(itemId);
+      };
+      
+      // Override deleteAttachment
+      var originalDeleteAttachment = deleteAttachment;
+      deleteAttachment = async function(attId) {
+        if (socket) socket.emit('attachment-delete', { room: room, attachmentId: attId, username: currentUsername });
+        await originalDeleteAttachment(attId);
+      };
+      
+      // Initialize
+      initSocket();
+      setupEditingTracking();
     </script>
   </body>
   </html>
