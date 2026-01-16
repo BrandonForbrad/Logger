@@ -3321,6 +3321,7 @@ function systemsListPage(opts) {
       <a href="/" class="navbar-brand">Daily Logger</a>
       <div class="navbar-links">
         <a href="/">Home</a>
+        <a href="/my-tasks">My Tasks</a>
         <a href="/systems" style="color: #0f172a;">Systems</a>
         <a href="/systems/history">History</a>
         ${admin ? '<a href="/admin">Admin</a>' : ''}
@@ -3473,7 +3474,8 @@ function systemDetailPage(opts) {
     ).join('') : '';
     
     return `
-      <div class="task-item ${task.is_completed ? 'completed' : ''}" data-task-id="${task.id}">
+      <div class="task-item ${task.is_completed ? 'completed' : ''}" data-task-id="${task.id}" draggable="true">
+        <div class="drag-handle" title="Drag to reorder">⋮⋮</div>
         <div class="task-checkbox">
           <input type="checkbox" ${task.is_completed ? 'checked' : ''} onchange="toggleTask(${task.id}, this.checked)">
         </div>
@@ -3757,9 +3759,27 @@ function systemDetailPage(opts) {
         gap: 12px;
         padding: 12px 0;
         border-bottom: 1px solid #f1f5f9;
+        transition: all 0.15s;
+        border-radius: 8px;
+        margin: 0 -8px;
+        padding-left: 8px;
+        padding-right: 8px;
       }
       .task-item:last-child { border-bottom: none; }
       .task-item.completed .task-title { text-decoration: line-through; color: #94a3b8; }
+      .task-item.dragging { opacity: 0.5; background: #eff6ff; }
+      .task-item.drag-over { border-top: 3px solid #2563eb; margin-top: -3px; }
+      .drag-handle {
+        cursor: grab;
+        color: #94a3b8;
+        padding: 4px;
+        font-size: 14px;
+        user-select: none;
+        letter-spacing: -2px;
+        transition: color 0.15s;
+      }
+      .drag-handle:hover { color: #475569; }
+      .drag-handle:active { cursor: grabbing; }
       .task-checkbox input { width: 18px; height: 18px; cursor: pointer; margin-top: 2px; }
       .task-content { flex: 1; min-width: 0; }
       .task-title { font-size: 15px; color: #0f172a; font-weight: 500; text-decoration: none; display: block; }
@@ -3823,6 +3843,7 @@ function systemDetailPage(opts) {
       <a href="/" class="navbar-brand">Daily Logger</a>
       <div class="navbar-links">
         <a href="/">Home</a>
+        <a href="/my-tasks">My Tasks</a>
         <a href="/systems">Systems</a>
         <a href="/systems/history">History</a>
         ${admin ? '<a href="/admin">Admin</a>' : ''}
@@ -4313,6 +4334,90 @@ function systemDetailPage(opts) {
         }
       }
       
+      // Drag and drop reordering for tasks
+      (function() {
+        var draggedItem = null;
+        var tasksList = document.querySelector('.tasks-list');
+        if (!tasksList) return;
+        
+        tasksList.addEventListener('dragstart', function(e) {
+          var taskItem = e.target.closest('.task-item');
+          if (!taskItem) return;
+          draggedItem = taskItem;
+          taskItem.classList.add('dragging');
+          e.dataTransfer.effectAllowed = 'move';
+          e.dataTransfer.setData('text/plain', taskItem.dataset.taskId);
+        });
+        
+        tasksList.addEventListener('dragend', function(e) {
+          var taskItem = e.target.closest('.task-item');
+          if (taskItem) taskItem.classList.remove('dragging');
+          document.querySelectorAll('.task-item.drag-over').forEach(function(el) {
+            el.classList.remove('drag-over');
+          });
+          draggedItem = null;
+        });
+        
+        tasksList.addEventListener('dragover', function(e) {
+          e.preventDefault();
+          e.dataTransfer.dropEffect = 'move';
+          
+          var taskItem = e.target.closest('.task-item');
+          if (!taskItem || taskItem === draggedItem) return;
+          
+          // Remove drag-over from all items
+          document.querySelectorAll('.task-item.drag-over').forEach(function(el) {
+            el.classList.remove('drag-over');
+          });
+          
+          taskItem.classList.add('drag-over');
+        });
+        
+        tasksList.addEventListener('dragleave', function(e) {
+          var taskItem = e.target.closest('.task-item');
+          if (taskItem) taskItem.classList.remove('drag-over');
+        });
+        
+        tasksList.addEventListener('drop', function(e) {
+          e.preventDefault();
+          
+          var dropTarget = e.target.closest('.task-item');
+          if (!dropTarget || !draggedItem || dropTarget === draggedItem) return;
+          
+          // Insert the dragged item before the drop target
+          var items = Array.from(tasksList.querySelectorAll('.task-item'));
+          var draggedIndex = items.indexOf(draggedItem);
+          var dropIndex = items.indexOf(dropTarget);
+          
+          if (draggedIndex < dropIndex) {
+            dropTarget.parentNode.insertBefore(draggedItem, dropTarget.nextSibling);
+          } else {
+            dropTarget.parentNode.insertBefore(draggedItem, dropTarget);
+          }
+          
+          dropTarget.classList.remove('drag-over');
+          
+          // Save new order to server
+          saveTaskOrder();
+        });
+        
+        async function saveTaskOrder() {
+          var taskIds = Array.from(tasksList.querySelectorAll('.task-item')).map(function(item) {
+            return parseInt(item.dataset.taskId);
+          });
+          
+          try {
+            await fetch('/api/systems/' + systemId + '/tasks/reorder', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ taskIds: taskIds })
+            });
+          } catch (e) {
+            console.error('Error saving task order:', e);
+          }
+        }
+      })();
+      
       async function deleteSystem() {
         if (!confirm('Delete this system and all its tasks?')) return;
         try {
@@ -4696,6 +4801,7 @@ function taskDetailPage(opts) {
       <a href="/" class="navbar-brand">Daily Logger</a>
       <div class="navbar-links">
         <a href="/">Home</a>
+        <a href="/my-tasks">My Tasks</a>
         <a href="/systems">Systems</a>
         <a href="/systems/history">History</a>
         ${admin ? '<a href="/admin">Admin</a>' : ''}
@@ -5211,6 +5317,373 @@ function taskDetailPage(opts) {
   `;
 }
 
+function myTasksPage(opts) {
+  const { tasks, systems, users, viewUser, currentUser, admin, escapeHtml } = opts;
+  
+  // Build user options for selector
+  const userOptions = (users || []).map(u => 
+    `<option value="${u.username}" ${viewUser === u.username ? 'selected' : ''}>${u.username}</option>`
+  ).join('');
+  
+  const isViewingOwnTasks = viewUser === currentUser;
+  
+  // Group tasks by status
+  const overdueTasks = tasks.filter(t => !t.is_completed && t.due_date && new Date(t.due_date) < new Date());
+  const todayTasks = tasks.filter(t => {
+    if (t.is_completed) return false;
+    if (!t.due_date) return false;
+    const due = new Date(t.due_date);
+    const today = new Date();
+    return due.toDateString() === today.toDateString();
+  });
+  const upcomingTasks = tasks.filter(t => {
+    if (t.is_completed) return false;
+    if (!t.due_date) return true;
+    const due = new Date(t.due_date);
+    const today = new Date();
+    return due > today && due.toDateString() !== today.toDateString();
+  });
+  const completedTasks = tasks.filter(t => t.is_completed);
+  
+  const renderTaskCard = (task, showSystem = true) => {
+    const priorityClass = {
+      low: 'badge-gray',
+      medium: 'badge-blue',
+      high: 'badge-yellow',
+      urgent: 'badge-red'
+    }[task.priority || 'medium'];
+    
+    const isOverdue = task.due_date && !task.is_completed && new Date(task.due_date) < new Date();
+    
+    return `
+      <div class="task-card ${task.is_completed ? 'completed' : ''}" data-task-id="${task.id}">
+        <div class="task-checkbox">
+          <input type="checkbox" ${task.is_completed ? 'checked' : ''} onchange="toggleTask(${task.id}, ${task.system_id}, this.checked)">
+        </div>
+        <div class="task-info">
+          <a href="/systems/${task.system_id}/tasks/${task.id}" class="task-title">${escapeHtml(task.title)}</a>
+          ${showSystem && task.system_name ? `
+            <a href="/systems/${task.system_id}" class="task-system" style="border-left-color: ${task.system_color || '#3b82f6'};">
+              ${escapeHtml(task.system_name)}
+            </a>
+          ` : ''}
+          <div class="task-meta">
+            <span class="badge ${priorityClass}">${task.priority || 'medium'}</span>
+            ${task.due_date ? `<span class="task-due ${isOverdue ? 'overdue' : ''}">${isOverdue ? '⚠️' : '📅'} ${task.due_date}</span>` : ''}
+          </div>
+        </div>
+      </div>
+    `;
+  };
+  
+  const systemCards = (systems || []).map(s => `
+    <a href="/systems/${s.id}" class="system-pill" style="border-left-color: ${s.color || '#3b82f6'};">
+      ${escapeHtml(s.name)}
+    </a>
+  `).join('');
+  
+  return `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <title>My Tasks - Daily Logger</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      ${systemsBaseCss()}
+      
+      .dashboard-grid {
+        display: grid;
+        grid-template-columns: 1fr 300px;
+        gap: 24px;
+      }
+      @media (max-width: 900px) {
+        .dashboard-grid { grid-template-columns: 1fr; }
+      }
+      
+      .task-section {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        margin-bottom: 20px;
+        overflow: hidden;
+      }
+      .task-section-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px 20px;
+        background: #f8fafc;
+        border-bottom: 1px solid #e2e8f0;
+      }
+      .task-section-header h3 { margin: 0; font-size: 15px; font-weight: 600; flex: 1; }
+      .task-section-header .count { 
+        background: #e2e8f0; 
+        color: #475569; 
+        padding: 2px 10px; 
+        border-radius: 12px; 
+        font-size: 13px; 
+        font-weight: 600;
+      }
+      .task-section.overdue .task-section-header { background: #fef2f2; border-color: #fecaca; }
+      .task-section.overdue .count { background: #fecaca; color: #dc2626; }
+      .task-section.today .task-section-header { background: #fefce8; border-color: #fef08a; }
+      .task-section.today .count { background: #fef08a; color: #ca8a04; }
+      
+      .task-section-body { padding: 8px 12px; }
+      .task-section-body:empty::after {
+        content: 'No tasks';
+        display: block;
+        padding: 16px;
+        text-align: center;
+        color: #94a3b8;
+      }
+      
+      .task-card {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 12px;
+        border-radius: 8px;
+        transition: background 0.15s;
+      }
+      .task-card:hover { background: #f8fafc; }
+      .task-card.completed { opacity: 0.6; }
+      .task-card.completed .task-title { text-decoration: line-through; color: #94a3b8; }
+      .task-checkbox input { width: 18px; height: 18px; cursor: pointer; margin-top: 2px; }
+      .task-info { flex: 1; min-width: 0; }
+      .task-title { 
+        display: block;
+        font-size: 15px; 
+        font-weight: 500; 
+        color: #0f172a; 
+        text-decoration: none;
+        margin-bottom: 4px;
+      }
+      .task-title:hover { color: #2563eb; }
+      .task-system {
+        display: inline-block;
+        font-size: 12px;
+        color: #64748b;
+        text-decoration: none;
+        border-left: 3px solid;
+        padding-left: 8px;
+        margin-bottom: 6px;
+      }
+      .task-system:hover { color: #2563eb; }
+      .task-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+      .task-due { font-size: 12px; color: #64748b; }
+      .task-due.overdue { color: #dc2626; font-weight: 500; }
+      
+      .sidebar-section {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 16px;
+        margin-bottom: 16px;
+      }
+      .sidebar-section h4 { margin: 0 0 12px; font-size: 14px; color: #64748b; text-transform: uppercase; letter-spacing: 0.05em; }
+      
+      .system-pill {
+        display: block;
+        padding: 10px 12px;
+        border: 1px solid #e2e8f0;
+        border-left-width: 4px;
+        border-radius: 8px;
+        margin-bottom: 8px;
+        text-decoration: none;
+        color: #0f172a;
+        font-size: 14px;
+        font-weight: 500;
+        transition: all 0.15s;
+      }
+      .system-pill:hover { background: #f8fafc; border-color: #cbd5e1; text-decoration: none; }
+      
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(2, 1fr);
+        gap: 12px;
+      }
+      .stat-card {
+        text-align: center;
+        padding: 16px 12px;
+        background: #f8fafc;
+        border-radius: 8px;
+      }
+      .stat-value { font-size: 28px; font-weight: 700; color: #0f172a; }
+      .stat-label { font-size: 12px; color: #64748b; margin-top: 4px; }
+      
+      .user-selector {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-left: auto;
+      }
+      .user-selector label {
+        font-size: 14px;
+        color: #64748b;
+        font-weight: 500;
+      }
+      .user-selector select {
+        padding: 8px 12px;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        font-size: 14px;
+        background: white;
+        min-width: 150px;
+        cursor: pointer;
+      }
+      .user-selector select:hover { border-color: #cbd5e1; }
+      .user-selector select:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); }
+      
+      .viewing-other-user {
+        background: #eff6ff;
+        border: 1px solid #bfdbfe;
+        border-radius: 8px;
+        padding: 12px 16px;
+        margin-bottom: 20px;
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+      .viewing-other-user span { color: #1e40af; font-size: 14px; }
+      .viewing-other-user a { color: #2563eb; font-weight: 500; }
+    </style>
+  </head>
+  <body>
+    <nav class="navbar">
+      <a href="/" class="navbar-brand">Daily Logger</a>
+      <div class="navbar-links">
+        <a href="/">Home</a>
+        <a href="/my-tasks" style="color: #0f172a;">My Tasks</a>
+        <a href="/systems">Systems</a>
+        ${admin ? '<a href="/admin">Admin</a>' : ''}
+      </div>
+    </nav>
+    
+    <div class="container">
+      <div class="page-header">
+        <h1 class="page-title">${isViewingOwnTasks ? 'My Tasks' : `${escapeHtml(viewUser)}'s Tasks`}</h1>
+        <div class="user-selector">
+          <label>View tasks for:</label>
+          <select onchange="window.location.href='/my-tasks?user=' + this.value">
+            ${userOptions}
+          </select>
+        </div>
+      </div>
+      
+      ${!isViewingOwnTasks ? `
+        <div class="viewing-other-user">
+          <span>👤 Viewing tasks assigned to <strong>${escapeHtml(viewUser)}</strong></span>
+          <a href="/my-tasks">← Back to my tasks</a>
+        </div>
+      ` : ''}
+      </div>
+      
+      <div class="dashboard-grid">
+        <div class="main-content">
+          ${overdueTasks.length > 0 ? `
+            <div class="task-section overdue">
+              <div class="task-section-header">
+                <span>⚠️</span>
+                <h3>Overdue</h3>
+                <span class="count">${overdueTasks.length}</span>
+              </div>
+              <div class="task-section-body">
+                ${overdueTasks.map(t => renderTaskCard(t)).join('')}
+              </div>
+            </div>
+          ` : ''}
+          
+          ${todayTasks.length > 0 ? `
+            <div class="task-section today">
+              <div class="task-section-header">
+                <span>📅</span>
+                <h3>Due Today</h3>
+                <span class="count">${todayTasks.length}</span>
+              </div>
+              <div class="task-section-body">
+                ${todayTasks.map(t => renderTaskCard(t)).join('')}
+              </div>
+            </div>
+          ` : ''}
+          
+          <div class="task-section">
+            <div class="task-section-header">
+              <span>📋</span>
+              <h3>To Do</h3>
+              <span class="count">${upcomingTasks.length}</span>
+            </div>
+            <div class="task-section-body">
+              ${upcomingTasks.map(t => renderTaskCard(t)).join('')}
+            </div>
+          </div>
+          
+          ${completedTasks.length > 0 ? `
+            <div class="task-section">
+              <div class="task-section-header">
+                <span>✅</span>
+                <h3>Completed</h3>
+                <span class="count">${completedTasks.length}</span>
+              </div>
+              <div class="task-section-body">
+                ${completedTasks.map(t => renderTaskCard(t)).join('')}
+              </div>
+            </div>
+          ` : ''}
+        </div>
+        
+        <div class="sidebar">
+          <div class="sidebar-section">
+            <h4>Summary</h4>
+            <div class="stats-grid">
+              <div class="stat-card">
+                <div class="stat-value">${tasks.filter(t => !t.is_completed).length}</div>
+                <div class="stat-label">Open Tasks</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value">${completedTasks.length}</div>
+                <div class="stat-label">Completed</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value" style="color: #dc2626;">${overdueTasks.length}</div>
+                <div class="stat-label">Overdue</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-value" style="color: #ca8a04;">${todayTasks.length}</div>
+                <div class="stat-label">Due Today</div>
+              </div>
+            </div>
+          </div>
+          
+          ${systems.length > 0 ? `
+            <div class="sidebar-section">
+              <h4>${isViewingOwnTasks ? 'My Systems' : `${escapeHtml(viewUser)}'s Systems`}</h4>
+              ${systemCards}
+            </div>
+          ` : ''}
+        </div>
+      </div>
+    </div>
+    
+    <script>
+      async function toggleTask(taskId, systemId, completed) {
+        try {
+          await fetch('/api/tasks/' + taskId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_completed: completed ? 1 : 0 })
+          });
+          location.reload();
+        } catch (e) {
+          console.error('Error toggling task:', e);
+        }
+      }
+    </script>
+  </body>
+  </html>
+  `;
+}
+
 function historyPage(opts) {
   const { history, currentUser, admin, escapeHtml } = opts;
   
@@ -5360,6 +5833,7 @@ function historyPage(opts) {
       <a href="/" class="navbar-brand">Daily Logger</a>
       <div class="navbar-links">
         <a href="/">Home</a>
+        <a href="/my-tasks">My Tasks</a>
         <a href="/systems">Systems</a>
         <a href="/systems/history" class="active">History</a>
       </div>
@@ -5547,4 +6021,5 @@ module.exports = {
   systemDetailPage,
   taskDetailPage,
   historyPage,
+  myTasksPage,
 };

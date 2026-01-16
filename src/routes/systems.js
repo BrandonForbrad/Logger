@@ -123,6 +123,55 @@ module.exports = function registerSystemsRoutes(app, deps) {
 		}
 	});
 
+	// My Tasks page - shows all tasks assigned to a user
+	app.get("/my-tasks", async (req, res) => {
+		const currentUser = getCurrentUser(req);
+		const admin = isAdmin(req);
+		if (!currentUser && !admin) {
+			return res.redirect("/login");
+		}
+
+		try {
+			// Allow viewing other users' tasks via query param
+			const viewUser = req.query.user || currentUser || "admin";
+			
+			// Get all users for the dropdown
+			const users = await dbAll("SELECT username FROM users ORDER BY username");
+			
+			// Get all tasks assigned to the selected user with system info
+			const tasks = await dbAll(
+				`SELECT t.*, s.name as system_name, s.color as system_color, s.id as system_id
+				 FROM system_tasks t
+				 LEFT JOIN systems s ON t.system_id = s.id
+				 WHERE t.assigned_to = ?
+				 ORDER BY t.is_completed ASC, t.due_date ASC, t.priority DESC, t.created_at DESC`,
+				[viewUser]
+			);
+			
+			// Get all systems this user is associated with (created by or has tasks in)
+			const systems = await dbAll(
+				`SELECT DISTINCT s.* FROM systems s
+				 LEFT JOIN system_tasks t ON s.id = t.system_id
+				 WHERE s.created_by = ? OR t.assigned_to = ?
+				 ORDER BY s.name ASC`,
+				[viewUser, viewUser]
+			);
+			
+			res.send(views.myTasksPage({
+				tasks,
+				systems,
+				users,
+				viewUser,
+				currentUser: currentUser || "admin",
+				admin,
+				escapeHtml
+			}));
+		} catch (err) {
+			console.error("Error loading my tasks page:", err);
+			res.status(500).send("Error loading tasks");
+		}
+	});
+
 	// Global history page (must be before :id route)
 	app.get("/systems/history", async (req, res) => {
 		const currentUser = getCurrentUser(req);
@@ -846,6 +895,37 @@ module.exports = function registerSystemsRoutes(app, deps) {
 		} catch (err) {
 			console.error("Error uploading attachments:", err);
 			res.status(500).json({ error: "Failed to upload attachments" });
+		}
+	});
+
+	// Reorder tasks within a system
+	app.post("/api/systems/:id/tasks/reorder", async (req, res) => {
+		const currentUser = getCurrentUser(req);
+		const admin = isAdmin(req);
+		if (!currentUser && !admin) {
+			return res.status(403).json({ error: "Not logged in" });
+		}
+
+		const { id } = req.params;
+		const { taskIds } = req.body;
+
+		if (!Array.isArray(taskIds)) {
+			return res.status(400).json({ error: "taskIds must be an array" });
+		}
+
+		try {
+			// Update position for each task
+			for (let i = 0; i < taskIds.length; i++) {
+				await dbRun(
+					"UPDATE system_tasks SET position = ? WHERE id = ? AND system_id = ?",
+					[i, taskIds[i], id]
+				);
+			}
+
+			res.json({ success: true });
+		} catch (err) {
+			console.error("Error reordering tasks:", err);
+			res.status(500).json({ error: "Failed to reorder tasks" });
 		}
 	});
 
