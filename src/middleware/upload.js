@@ -53,6 +53,11 @@ function allowFile(file) {
     return false;
   }
 
+  // Systems/Tasks attachments - allow ANY file type
+  if (field === "files") {
+    return true;
+  }
+
   // Inline paste + log media should be images/videos.
   if (mime.startsWith("image/") || mime.startsWith("video/")) return true;
   if (

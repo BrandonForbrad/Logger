@@ -3061,6 +3061,2466 @@ function restoringUploadedBackupPage() {
   `;
 }
 
+// ==================== SYSTEMS VIEWS ====================
+
+function systemsBaseCss() {
+  return `
+    body { font-family: system-ui, -apple-system, sans-serif; margin: 0; background: #f8fafc; color: #1e293b; }
+    * { box-sizing: border-box; }
+    a { color: #2563eb; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    
+    .navbar {
+      background: white;
+      border-bottom: 1px solid #e2e8f0;
+      padding: 12px 24px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .navbar-brand { font-weight: 700; font-size: 18px; color: #0f172a; }
+    .navbar-links { display: flex; gap: 16px; margin-left: auto; }
+    .navbar-links a { font-size: 14px; color: #64748b; font-weight: 500; }
+    .navbar-links a:hover { color: #0f172a; }
+    
+    .container { max-width: 1400px; margin: 0 auto; padding: 24px; }
+    .page-header { display: flex; align-items: center; gap: 16px; margin-bottom: 24px; flex-wrap: wrap; }
+    .page-title { font-size: 28px; font-weight: 700; margin: 0; }
+    
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      transition: all 0.15s;
+    }
+    .btn-primary { background: #2563eb; color: white; }
+    .btn-primary:hover { background: #1d4ed8; }
+    .btn-secondary { background: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; }
+    .btn-secondary:hover { background: #e2e8f0; }
+    .btn-danger { background: #fee2e2; color: #dc2626; }
+    .btn-danger:hover { background: #fecaca; }
+    .btn-sm { padding: 6px 12px; font-size: 13px; }
+    .btn-icon { padding: 6px; width: 32px; height: 32px; justify-content: center; }
+    
+    .card {
+      background: white;
+      border: 1px solid #e2e8f0;
+      border-radius: 12px;
+      overflow: hidden;
+    }
+    .card-body { padding: 20px; }
+    
+    .form-group { margin-bottom: 16px; }
+    .form-label { display: block; font-size: 13px; font-weight: 600; color: #475569; margin-bottom: 6px; }
+    .form-input, .form-textarea, .form-select {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #e2e8f0;
+      border-radius: 8px;
+      font-size: 14px;
+      font-family: inherit;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .form-input:focus, .form-textarea:focus, .form-select:focus {
+      outline: none;
+      border-color: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+    .form-textarea { min-height: 120px; resize: vertical; }
+    
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: 2px 8px;
+      border-radius: 9999px;
+      font-size: 11px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.025em;
+    }
+    .badge-blue { background: #dbeafe; color: #1d4ed8; }
+    .badge-green { background: #dcfce7; color: #16a34a; }
+    .badge-yellow { background: #fef9c3; color: #ca8a04; }
+    .badge-red { background: #fee2e2; color: #dc2626; }
+    .badge-gray { background: #f1f5f9; color: #64748b; }
+    
+    .tag {
+      display: inline-flex;
+      align-items: center;
+      padding: 3px 10px;
+      background: #f1f5f9;
+      border-radius: 6px;
+      font-size: 12px;
+      color: #475569;
+      margin: 2px;
+    }
+    
+    .avatar {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      background: #e2e8f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 12px;
+      font-weight: 600;
+      color: #64748b;
+    }
+    
+    .empty-state {
+      text-align: center;
+      padding: 48px 24px;
+      color: #64748b;
+    }
+    .empty-state h3 { margin: 0 0 8px; color: #475569; }
+    .empty-state p { margin: 0 0 16px; font-size: 14px; }
+    
+    .filters {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: center;
+    }
+    .filter-group { display: flex; align-items: center; gap: 6px; }
+    .filter-label { font-size: 13px; color: #64748b; white-space: nowrap; }
+  `;
+}
+
+function systemsListPage(opts) {
+  const { systems, users, currentUser, admin, filterAssigned, filterTag } = opts;
+  
+  const userOptions = (users || []).map(u => 
+    `<option value="${u.username}" ${filterAssigned === u.username ? 'selected' : ''}>${u.username}</option>`
+  ).join('');
+  
+  // Get all unique tags
+  const allTags = new Set();
+  (systems || []).forEach(s => {
+    if (s.tags) {
+      s.tags.split(',').forEach(t => allTags.add(t.trim()));
+    }
+  });
+  const tagOptions = [...allTags].map(t => 
+    `<option value="${t}" ${filterTag === t ? 'selected' : ''}>${t}</option>`
+  ).join('');
+  
+  const systemCards = (systems || []).map(s => {
+    const taskCount = s.tasks?.length || 0;
+    const completedCount = s.tasks?.filter(t => t.is_completed).length || 0;
+    const tags = s.tags ? s.tags.split(',').map(t => 
+      `<span class="tag">${t.trim()}</span>`
+    ).join('') : '';
+    
+    return `
+      <a href="/systems/${s.id}" class="system-card" style="border-left: 4px solid ${s.color || '#3b82f6'};">
+        <div class="system-card-header">
+          <h3 class="system-card-title">${s.name}</h3>
+          ${s.created_by ? `<span class="avatar" title="Created by ${s.created_by}">${s.created_by.charAt(0).toUpperCase()}</span>` : ''}
+        </div>
+        ${s.description ? `<p class="system-card-desc">${s.description}</p>` : ''}
+        <div class="system-card-meta">
+          <span class="badge badge-gray">${taskCount} task${taskCount !== 1 ? 's' : ''}</span>
+          ${taskCount > 0 ? `<span class="badge badge-green">${completedCount}/${taskCount} done</span>` : ''}
+        </div>
+        ${tags ? `<div class="system-card-tags">${tags}</div>` : ''}
+      </a>
+    `;
+  }).join('');
+  
+  return `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <title>Systems - Daily Logger</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      ${systemsBaseCss()}
+      
+      .systems-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+        gap: 16px;
+      }
+      .system-card {
+        display: block;
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 20px;
+        transition: all 0.15s;
+        text-decoration: none;
+        color: inherit;
+      }
+      .system-card:hover {
+        border-color: #cbd5e1;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        transform: translateY(-2px);
+        text-decoration: none;
+      }
+      .system-card-header { display: flex; align-items: center; gap: 12px; margin-bottom: 8px; }
+      .system-card-title { margin: 0; font-size: 18px; flex: 1; color: #0f172a; }
+      .system-card-desc { margin: 0 0 12px; font-size: 14px; color: #64748b; line-height: 1.5; }
+      .system-card-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
+      .system-card-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+      
+      .new-system-modal {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.4);
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        z-index: 1000;
+      }
+      .new-system-modal.active { display: flex; }
+      .modal-content {
+        background: white;
+        border-radius: 16px;
+        width: 100%;
+        max-width: 480px;
+        max-height: 90vh;
+        overflow: auto;
+      }
+      .modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 20px;
+        border-bottom: 1px solid #e2e8f0;
+      }
+      .modal-header h2 { margin: 0; font-size: 18px; }
+      .modal-body { padding: 20px; }
+      .modal-footer { padding: 16px 20px; border-top: 1px solid #e2e8f0; display: flex; gap: 12px; justify-content: flex-end; }
+      
+      .color-picker { display: flex; gap: 8px; flex-wrap: wrap; }
+      .color-swatch {
+        width: 32px;
+        height: 32px;
+        border-radius: 8px;
+        cursor: pointer;
+        border: 2px solid transparent;
+        transition: all 0.15s;
+      }
+      .color-swatch:hover { transform: scale(1.1); }
+      .color-swatch.active { border-color: #0f172a; }
+    </style>
+  </head>
+  <body>
+    <nav class="navbar">
+      <a href="/" class="navbar-brand">Daily Logger</a>
+      <div class="navbar-links">
+        <a href="/">Home</a>
+        <a href="/systems" style="color: #0f172a;">Systems</a>
+        <a href="/systems/history">History</a>
+        ${admin ? '<a href="/admin">Admin</a>' : ''}
+      </div>
+    </nav>
+    
+    <div class="container">
+      <div class="page-header">
+        <h1 class="page-title">Systems</h1>
+        <button class="btn btn-primary" onclick="openNewSystemModal()">+ New System</button>
+        
+        <div class="filters" style="margin-left: auto;">
+          <div class="filter-group">
+            <label class="filter-label">Assigned:</label>
+            <select class="form-select" style="width: auto;" onchange="applyFilters()">
+              <option value="">All</option>
+              ${userOptions}
+            </select>
+          </div>
+          <div class="filter-group">
+            <label class="filter-label">Tag:</label>
+            <select class="form-select" style="width: auto;" onchange="applyFilters()">
+              <option value="">All</option>
+              ${tagOptions}
+            </select>
+          </div>
+        </div>
+      </div>
+      
+      ${systems && systems.length > 0 ? `
+        <div class="systems-grid">
+          ${systemCards}
+        </div>
+      ` : `
+        <div class="empty-state">
+          <h3>No systems yet</h3>
+          <p>Create your first system to start organizing tasks and documentation.</p>
+          <button class="btn btn-primary" onclick="openNewSystemModal()">+ Create System</button>
+        </div>
+      `}
+    </div>
+    
+    <!-- New System Modal -->
+    <div class="new-system-modal" id="newSystemModal">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>New System</h2>
+          <button class="btn btn-icon btn-secondary" onclick="closeNewSystemModal()">&times;</button>
+        </div>
+        <form id="newSystemForm" action="/systems/new" method="POST">
+          <div class="modal-body">
+            <div class="form-group">
+              <label class="form-label">Name *</label>
+              <input type="text" name="name" class="form-input" placeholder="e.g., Q1 Goals, Product Roadmap" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Description</label>
+              <textarea name="description" class="form-textarea" placeholder="Brief description of this system..."></textarea>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Color</label>
+              <input type="hidden" name="color" id="systemColor" value="#3b82f6">
+              <div class="color-picker">
+                <div class="color-swatch active" style="background: #3b82f6;" data-color="#3b82f6"></div>
+                <div class="color-swatch" style="background: #8b5cf6;" data-color="#8b5cf6"></div>
+                <div class="color-swatch" style="background: #ec4899;" data-color="#ec4899"></div>
+                <div class="color-swatch" style="background: #ef4444;" data-color="#ef4444"></div>
+                <div class="color-swatch" style="background: #f97316;" data-color="#f97316"></div>
+                <div class="color-swatch" style="background: #eab308;" data-color="#eab308"></div>
+                <div class="color-swatch" style="background: #22c55e;" data-color="#22c55e"></div>
+                <div class="color-swatch" style="background: #14b8a6;" data-color="#14b8a6"></div>
+                <div class="color-swatch" style="background: #64748b;" data-color="#64748b"></div>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Tags (comma-separated)</label>
+              <input type="text" name="tags" class="form-input" placeholder="e.g., marketing, urgent, q1">
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-secondary" onclick="closeNewSystemModal()">Cancel</button>
+            <button type="submit" class="btn btn-primary">Create System</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    
+    <script>
+      function openNewSystemModal() {
+        document.getElementById('newSystemModal').classList.add('active');
+      }
+      function closeNewSystemModal() {
+        document.getElementById('newSystemModal').classList.remove('active');
+      }
+      
+      document.querySelectorAll('.color-swatch').forEach(function(swatch) {
+        swatch.addEventListener('click', function() {
+          document.querySelectorAll('.color-swatch').forEach(function(s) { s.classList.remove('active'); });
+          this.classList.add('active');
+          document.getElementById('systemColor').value = this.dataset.color;
+        });
+      });
+      
+      // Close modal on backdrop click
+      document.getElementById('newSystemModal').addEventListener('click', function(e) {
+        if (e.target === this) closeNewSystemModal();
+      });
+      
+      function applyFilters() {
+        // Filter implementation would go here
+      }
+    </script>
+  </body>
+  </html>
+  `;
+}
+
+function systemDetailPage(opts) {
+  const { system, users, currentUser, admin, escapeHtml } = opts;
+  const tasks = system.tasks || [];
+  const attachments = system.attachments || [];
+  
+  const userOptions = (users || []).map(u => 
+    `<option value="${u.username}">${u.username}</option>`
+  ).join('');
+  
+  const tags = system.tags ? system.tags.split(',').map(t => 
+    `<span class="tag">${escapeHtml(t.trim())}</span>`
+  ).join('') : '';
+  
+  // Priority options
+  const priorityOptions = `
+    <option value="low">Low</option>
+    <option value="medium" selected>Medium</option>
+    <option value="high">High</option>
+    <option value="urgent">Urgent</option>
+  `;
+  
+  const tasksList = tasks.map(task => {
+    const priorityClass = {
+      low: 'badge-gray',
+      medium: 'badge-blue',
+      high: 'badge-yellow',
+      urgent: 'badge-red'
+    }[task.priority || 'medium'];
+    
+    const isOverdue = task.due_date && !task.is_completed && new Date(task.due_date) < new Date();
+    const taskTags = task.tags ? task.tags.split(',').map(t => 
+      `<span class="tag" style="font-size: 10px;">${escapeHtml(t.trim())}</span>`
+    ).join('') : '';
+    
+    return `
+      <div class="task-item ${task.is_completed ? 'completed' : ''}" data-task-id="${task.id}">
+        <div class="task-checkbox">
+          <input type="checkbox" ${task.is_completed ? 'checked' : ''} onchange="toggleTask(${task.id}, this.checked)">
+        </div>
+        <div class="task-content">
+          <a href="/systems/${system.id}/tasks/${task.id}" class="task-title">${escapeHtml(task.title)}</a>
+          <div class="task-meta">
+            <span class="badge ${priorityClass}">${task.priority || 'medium'}</span>
+            ${task.assigned_to ? `<span class="avatar" title="Assigned to ${escapeHtml(task.assigned_to)}">${task.assigned_to.charAt(0).toUpperCase()}</span>` : ''}
+            ${task.due_date ? `<span class="${isOverdue ? 'text-danger' : ''}" style="font-size: 12px; ${isOverdue ? 'color: #dc2626;' : ''}">Due: ${task.due_date}</span>` : ''}
+            ${taskTags}
+          </div>
+          ${task.completed_by && task.is_completed ? `<div class="task-completed-by">Completed by ${escapeHtml(task.completed_by)}</div>` : ''}
+        </div>
+        <div class="task-actions">
+          <button class="btn btn-icon btn-secondary btn-sm" onclick="deleteTask(${task.id})" title="Delete">🗑</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+  
+  const attachmentsList = attachments.map(att => `
+    <div class="attachment-item">
+      <a href="/uploads/${att.filename}" target="_blank" class="attachment-link">
+        ${att.mime_type && att.mime_type.startsWith('image/') ? 
+          `<img src="/uploads/${att.filename}" class="attachment-preview" alt="${escapeHtml(att.original_name)}">` :
+          `<div class="attachment-icon">📎</div>`
+        }
+        <span class="attachment-name">${escapeHtml(att.original_name)}</span>
+      </a>
+      ${admin ? `<button class="btn btn-icon btn-danger btn-sm" onclick="deleteAttachment(${att.id})">🗑</button>` : ''}
+    </div>
+  `).join('');
+  
+  return `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <title>${escapeHtml(system.name)} - Systems</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      ${systemsBaseCss()}
+      
+      .system-header {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 24px;
+        border-left: 5px solid ${system.color || '#3b82f6'};
+      }
+      .system-title-row { display: flex; align-items: center; gap: 16px; margin-bottom: 16px; }
+      .system-title { margin: 0; font-size: 32px; flex: 1; }
+      .system-title input {
+        font-size: 32px;
+        font-weight: 700;
+        border: none;
+        background: none;
+        width: 100%;
+        padding: 0;
+      }
+      .system-title input:focus { outline: none; }
+      .system-description { font-size: 15px; color: #64748b; line-height: 1.6; margin-bottom: 16px; }
+      .system-description textarea {
+        width: 100%;
+        border: none;
+        background: #f8fafc;
+        border-radius: 8px;
+        padding: 12px;
+        font-size: 15px;
+        font-family: inherit;
+        resize: vertical;
+        min-height: 80px;
+      }
+      .system-description textarea:focus { outline: 2px solid #2563eb; background: white; }
+      .system-tags { display: flex; flex-wrap: wrap; gap: 6px; }
+      
+      .content-section {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        margin-bottom: 24px;
+      }
+      .section-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px 20px;
+        border-bottom: 1px solid #e2e8f0;
+      }
+      .section-title { margin: 0; font-size: 16px; flex: 1; }
+      .section-body { padding: 16px 20px; }
+      
+      .rich-editor-wrapper {
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .rich-editor-wrapper:focus-within {
+        border-color: #2563eb;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+      }
+      
+      .formatting-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 2px;
+        padding: 8px 12px;
+        background: #f8fafc;
+        border-bottom: 1px solid #e2e8f0;
+        align-items: center;
+      }
+      .toolbar-group {
+        display: flex;
+        gap: 2px;
+        align-items: center;
+      }
+      .toolbar-divider {
+        width: 1px;
+        height: 24px;
+        background: #e2e8f0;
+        margin: 0 8px;
+      }
+      .toolbar-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border: none;
+        background: transparent;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        color: #475569;
+        transition: all 0.15s;
+      }
+      .toolbar-btn:hover { background: #e2e8f0; color: #0f172a; }
+      .toolbar-btn.active { background: #dbeafe; color: #2563eb; }
+      .toolbar-btn svg { width: 18px; height: 18px; }
+      .toolbar-select {
+        height: 32px;
+        padding: 0 8px;
+        border: 1px solid #e2e8f0;
+        border-radius: 4px;
+        background: white;
+        font-size: 13px;
+        cursor: pointer;
+        min-width: 100px;
+      }
+      .toolbar-select:hover { border-color: #94a3b8; }
+      .toolbar-color-input {
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: 2px solid #e2e8f0;
+        border-radius: 4px;
+        cursor: pointer;
+        background: transparent;
+      }
+      .toolbar-color-input::-webkit-color-swatch { border: none; border-radius: 2px; }
+      .toolbar-color-input::-webkit-color-swatch-wrapper { padding: 0; }
+      
+      .rich-editor {
+        min-height: 300px;
+        padding: 20px;
+        font-size: 15px;
+        line-height: 1.7;
+        outline: none;
+        overflow-y: auto;
+      }
+      .rich-editor:empty::before {
+        content: 'Start writing...';
+        color: #94a3b8;
+        pointer-events: none;
+      }
+      .rich-editor h1 { font-size: 28px; font-weight: 700; margin: 0 0 16px; }
+      .rich-editor h2 { font-size: 22px; font-weight: 600; margin: 0 0 14px; }
+      .rich-editor h3 { font-size: 18px; font-weight: 600; margin: 0 0 12px; }
+      .rich-editor p { margin: 0 0 12px; }
+      .rich-editor ul, .rich-editor ol { margin: 0 0 12px; padding-left: 24px; }
+      .rich-editor li { margin-bottom: 4px; }
+      .rich-editor blockquote {
+        margin: 0 0 12px;
+        padding: 12px 16px;
+        border-left: 4px solid #2563eb;
+        background: #f1f5f9;
+        border-radius: 0 8px 8px 0;
+      }
+      .rich-editor pre {
+        margin: 0 0 12px;
+        padding: 16px;
+        background: #1e293b;
+        color: #e2e8f0;
+        border-radius: 8px;
+        font-family: 'Monaco', 'Consolas', monospace;
+        font-size: 13px;
+        overflow-x: auto;
+      }
+      .rich-editor code {
+        background: #f1f5f9;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-family: 'Monaco', 'Consolas', monospace;
+        font-size: 0.9em;
+      }
+      .rich-editor pre code { background: transparent; padding: 0; }
+      .rich-editor a { color: #2563eb; text-decoration: underline; }
+      .rich-editor img { max-width: 100%; height: auto; border-radius: 8px; margin: 8px 0; }
+      .rich-editor video { max-width: 100%; border-radius: 8px; margin: 8px 0; }
+      .rich-editor table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+      .rich-editor th, .rich-editor td { border: 1px solid #e2e8f0; padding: 8px 12px; text-align: left; }
+      .rich-editor th { background: #f8fafc; font-weight: 600; }
+      .rich-editor hr { border: none; border-top: 2px solid #e2e8f0; margin: 20px 0; }
+      
+      .resizable-media {
+        display: inline-block;
+        position: relative;
+        margin: 8px 0;
+        user-select: none;
+      }
+      .resizable-media img, .resizable-media video {
+        display: block;
+        border-radius: 8px;
+      }
+      .resizable-media:hover .resize-handle,
+      .resizable-media:focus-within .resize-handle {
+        opacity: 1;
+      }
+      .resize-handle {
+        position: absolute;
+        right: -6px;
+        bottom: -6px;
+        width: 16px;
+        height: 16px;
+        background: #2563eb;
+        border: 2px solid white;
+        border-radius: 4px;
+        cursor: se-resize;
+        opacity: 0;
+        transition: opacity 0.15s;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      }
+      .resize-handle::before {
+        content: '';
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 6px;
+        height: 6px;
+        border-right: 2px solid white;
+        border-bottom: 2px solid white;
+      }
+      
+      .inline-file {
+        display: inline-block;
+        margin: 8px 0;
+      }
+      .file-download-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 16px;
+        background: #f1f5f9;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        color: #1e293b;
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 500;
+        transition: all 0.15s;
+      }
+      .file-download-link:hover {
+        background: #e2e8f0;
+        border-color: #cbd5e1;
+        text-decoration: none;
+      }
+      
+      .task-item {
+        display: flex;
+        align-items: flex-start;
+        gap: 12px;
+        padding: 12px 0;
+        border-bottom: 1px solid #f1f5f9;
+      }
+      .task-item:last-child { border-bottom: none; }
+      .task-item.completed .task-title { text-decoration: line-through; color: #94a3b8; }
+      .task-checkbox input { width: 18px; height: 18px; cursor: pointer; margin-top: 2px; }
+      .task-content { flex: 1; min-width: 0; }
+      .task-title { font-size: 15px; color: #0f172a; font-weight: 500; text-decoration: none; display: block; }
+      .task-title:hover { color: #2563eb; }
+      .task-meta { display: flex; align-items: center; gap: 8px; margin-top: 6px; flex-wrap: wrap; }
+      .task-completed-by { font-size: 11px; color: #94a3b8; margin-top: 4px; }
+      .task-actions { display: flex; gap: 4px; }
+      
+      .add-task-form {
+        display: flex;
+        gap: 12px;
+        padding: 16px 0;
+        border-top: 1px solid #e2e8f0;
+        margin-top: 8px;
+      }
+      .add-task-form input { flex: 1; }
+      
+      .attachments-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 12px;
+      }
+      .attachment-item {
+        position: relative;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .attachment-link { display: block; text-decoration: none; color: inherit; }
+      .attachment-preview { width: 100%; height: 100px; object-fit: cover; }
+      .attachment-icon { height: 100px; display: flex; align-items: center; justify-content: center; font-size: 32px; background: #f8fafc; }
+      .attachment-name { display: block; padding: 8px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .attachment-item .btn { position: absolute; top: 4px; right: 4px; }
+      
+      .upload-zone {
+        border: 2px dashed #e2e8f0;
+        border-radius: 8px;
+        padding: 24px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+      .upload-zone:hover { border-color: #2563eb; background: #f8fafc; }
+      .upload-zone.dragover { border-color: #2563eb; background: #eff6ff; }
+      
+      .new-task-modal {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.4);
+        align-items: center;
+        justify-content: center;
+        padding: 16px;
+        z-index: 1000;
+      }
+      .new-task-modal.active { display: flex; }
+    </style>
+  </head>
+  <body>
+    <nav class="navbar">
+      <a href="/" class="navbar-brand">Daily Logger</a>
+      <div class="navbar-links">
+        <a href="/">Home</a>
+        <a href="/systems">Systems</a>
+        <a href="/systems/history">History</a>
+        ${admin ? '<a href="/admin">Admin</a>' : ''}
+      </div>
+    </nav>
+    
+    <div class="container">
+      <div style="margin-bottom: 16px;">
+        <a href="/systems" class="btn btn-secondary btn-sm">← Back to Systems</a>
+      </div>
+      
+      <!-- System Header -->
+      <div class="system-header">
+        <div class="system-title-row">
+          <h1 class="system-title">
+            <input type="text" id="systemName" value="${escapeHtml(system.name)}" onblur="updateSystem()">
+          </h1>
+          ${admin ? `<button class="btn btn-danger" onclick="deleteSystem()">Delete System</button>` : ''}
+        </div>
+        <div class="system-description">
+          <textarea id="systemDescription" placeholder="Add a description..." onblur="updateSystem()">${escapeHtml(system.description || '')}</textarea>
+        </div>
+        ${tags ? `<div class="system-tags">${tags}</div>` : ''}
+      </div>
+      
+      <!-- Content Section (like Google Docs) -->
+      <div class="content-section">
+        <div class="section-header">
+          <h2 class="section-title">📝 Content</h2>
+        </div>
+        <div class="section-body">
+          <div class="rich-editor-wrapper">
+            <div class="formatting-toolbar">
+              <div class="toolbar-group">
+                <select class="toolbar-select" onchange="formatBlock(this.value); this.value='';" title="Text Style">
+                  <option value="">Style</option>
+                  <option value="h1">Heading 1</option>
+                  <option value="h2">Heading 2</option>
+                  <option value="h3">Heading 3</option>
+                  <option value="p">Paragraph</option>
+                  <option value="pre">Code Block</option>
+                  <option value="blockquote">Quote</option>
+                </select>
+              </div>
+              <div class="toolbar-divider"></div>
+              <div class="toolbar-group">
+                <button type="button" class="toolbar-btn" onclick="execCmd('bold')" title="Bold (Ctrl+B)"><b>B</b></button>
+                <button type="button" class="toolbar-btn" onclick="execCmd('italic')" title="Italic (Ctrl+I)"><i>I</i></button>
+                <button type="button" class="toolbar-btn" onclick="execCmd('underline')" title="Underline (Ctrl+U)"><u>U</u></button>
+                <button type="button" class="toolbar-btn" onclick="execCmd('strikeThrough')" title="Strikethrough"><s>S</s></button>
+              </div>
+              <div class="toolbar-divider"></div>
+              <div class="toolbar-group">
+                <input type="color" class="toolbar-color-input" value="#000000" onchange="execCmd('foreColor', this.value)" title="Text Color">
+                <input type="color" class="toolbar-color-input" value="#ffffff" onchange="execCmd('backColor', this.value)" title="Highlight">
+              </div>
+              <div class="toolbar-divider"></div>
+              <div class="toolbar-group">
+                <button type="button" class="toolbar-btn" onclick="execCmd('justifyLeft')" title="Align Left">⬅</button>
+                <button type="button" class="toolbar-btn" onclick="execCmd('justifyCenter')" title="Align Center">≡</button>
+                <button type="button" class="toolbar-btn" onclick="execCmd('justifyRight')" title="Align Right">➡</button>
+                <button type="button" class="toolbar-btn" onclick="execCmd('justifyFull')" title="Justify">☰</button>
+              </div>
+              <div class="toolbar-divider"></div>
+              <div class="toolbar-group">
+                <button type="button" class="toolbar-btn" onclick="execCmd('insertUnorderedList')" title="Bullet List">•≡</button>
+                <button type="button" class="toolbar-btn" onclick="execCmd('insertOrderedList')" title="Numbered List">1.</button>
+                <button type="button" class="toolbar-btn" onclick="execCmd('outdent')" title="Decrease Indent">←</button>
+                <button type="button" class="toolbar-btn" onclick="execCmd('indent')" title="Increase Indent">→</button>
+              </div>
+              <div class="toolbar-divider"></div>
+              <div class="toolbar-group">
+                <button type="button" class="toolbar-btn" onclick="insertLink()" title="Insert Link">🔗</button>
+                <button type="button" class="toolbar-btn" onclick="triggerFileUpload('image')" title="Upload Image">🖼️</button>
+                <button type="button" class="toolbar-btn" onclick="triggerFileUpload('video')" title="Upload Video">🎬</button>
+                <button type="button" class="toolbar-btn" onclick="triggerFileUpload('file')" title="Upload File">📎</button>
+                <button type="button" class="toolbar-btn" onclick="insertTable()" title="Insert Table">📊</button>
+                <button type="button" class="toolbar-btn" onclick="execCmd('insertHorizontalRule')" title="Horizontal Line">—</button>
+                <input type="file" id="inlineFileInput" style="display:none" onchange="handleFileUpload(this)" accept="*/*">
+              </div>
+              <div class="toolbar-divider"></div>
+              <div class="toolbar-group">
+                <button type="button" class="toolbar-btn" onclick="execCmd('removeFormat')" title="Clear Formatting">✖</button>
+                <button type="button" class="toolbar-btn" onclick="execCmd('undo')" title="Undo (Ctrl+Z)">↩</button>
+                <button type="button" class="toolbar-btn" onclick="execCmd('redo')" title="Redo (Ctrl+Y)">↪</button>
+              </div>
+            </div>
+            <div class="rich-editor" contenteditable="true" id="systemContent" onblur="updateSystem()" oninput="autoSave()">${system.content || ''}</div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Tasks Section -->
+      <div class="content-section">
+        <div class="section-header">
+          <h2 class="section-title">✅ Tasks (${tasks.length})</h2>
+          <button class="btn btn-primary btn-sm" onclick="openNewTaskModal()">+ Add Task</button>
+        </div>
+        <div class="section-body">
+          ${tasks.length > 0 ? `
+            <div class="tasks-list">
+              ${tasksList}
+            </div>
+          ` : `
+            <div class="empty-state" style="padding: 24px;">
+              <p>No tasks yet. Add your first task to start tracking work.</p>
+            </div>
+          `}
+        </div>
+      </div>
+      
+      <!-- Attachments Section -->
+      <div class="content-section">
+        <div class="section-header">
+          <h2 class="section-title">📎 Attachments (${attachments.length})</h2>
+        </div>
+        <div class="section-body">
+          ${attachments.length > 0 ? `
+            <div class="attachments-grid" style="margin-bottom: 16px;">
+              ${attachmentsList}
+            </div>
+          ` : ''}
+          <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
+            <input type="file" id="fileInput" multiple style="display: none;" onchange="uploadFiles(this.files)">
+            <p style="margin: 0; color: #64748b;">Drop files here or click to upload</p>
+            <p style="margin: 4px 0 0; font-size: 12px; color: #94a3b8;">Images, videos, documents</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- New Task Modal -->
+    <div class="new-task-modal" id="newTaskModal">
+      <div class="modal-content" style="background: white; border-radius: 16px; width: 100%; max-width: 520px;">
+        <div class="modal-header" style="display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid #e2e8f0;">
+          <h2 style="margin: 0; font-size: 18px;">New Task</h2>
+          <button class="btn btn-icon btn-secondary" onclick="closeNewTaskModal()">&times;</button>
+        </div>
+        <form id="newTaskForm" method="POST" action="/systems/${system.id}/tasks/new">
+          <div style="padding: 20px;">
+            <div class="form-group">
+              <label class="form-label">Title *</label>
+              <input type="text" name="title" class="form-input" placeholder="What needs to be done?" required>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Description</label>
+              <textarea name="description" class="form-textarea" placeholder="Add more details..."></textarea>
+            </div>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+              <div class="form-group">
+                <label class="form-label">Assigned To</label>
+                <select name="assigned_to" class="form-select">
+                  <option value="">Unassigned</option>
+                  ${userOptions}
+                </select>
+              </div>
+              <div class="form-group">
+                <label class="form-label">Priority</label>
+                <select name="priority" class="form-select">
+                  ${priorityOptions}
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Due Date</label>
+              <input type="date" name="due_date" class="form-input">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Tags (comma-separated)</label>
+              <input type="text" name="tags" class="form-input" placeholder="e.g., bug, feature, docs">
+            </div>
+          </div>
+          <div style="padding: 16px 20px; border-top: 1px solid #e2e8f0; display: flex; gap: 12px; justify-content: flex-end;">
+            <button type="button" class="btn btn-secondary" onclick="closeNewTaskModal()">Cancel</button>
+            <button type="submit" class="btn btn-primary">Create Task</button>
+          </div>
+        </form>
+      </div>
+    </div>
+    
+    <script>
+      var systemId = ${system.id};
+      
+      function openNewTaskModal() {
+        document.getElementById('newTaskModal').classList.add('active');
+      }
+      function closeNewTaskModal() {
+        document.getElementById('newTaskModal').classList.remove('active');
+      }
+      document.getElementById('newTaskModal').addEventListener('click', function(e) {
+        if (e.target === this) closeNewTaskModal();
+      });
+      
+      // Rich Text Editor Functions
+      function execCmd(command, value) {
+        document.execCommand(command, false, value || null);
+        document.getElementById('systemContent').focus();
+      }
+      
+      function formatBlock(tag) {
+        if (tag) {
+          document.execCommand('formatBlock', false, '<' + tag + '>');
+          document.getElementById('systemContent').focus();
+        }
+      }
+      
+      function insertLink() {
+        var url = prompt('Enter URL:', 'https://');
+        if (url) {
+          var selection = window.getSelection();
+          var text = selection.toString() || url;
+          document.execCommand('insertHTML', false, '<a href="' + url + '" target="_blank">' + text + '</a>');
+        }
+      }
+      
+      var currentUploadType = 'file';
+      function triggerFileUpload(type) {
+        currentUploadType = type;
+        var input = document.getElementById('inlineFileInput');
+        if (type === 'image') {
+          input.accept = 'image/*';
+        } else if (type === 'video') {
+          input.accept = 'video/*';
+        } else {
+          input.accept = '*/*';
+        }
+        input.click();
+      }
+      
+      async function handleFileUpload(input) {
+        if (!input.files || !input.files.length) return;
+        var file = input.files[0];
+        await uploadAndInsertMedia(file);
+        input.value = '';
+      }
+      
+      function insertImage() {
+        triggerFileUpload('image');
+      }
+
+      function insertTable() {
+        var rows = prompt('Number of rows:', '3') || '3';
+        var cols = prompt('Number of columns:', '3') || '3';
+        var tableHtml = '<table><tbody>';
+        for (var i = 0; i < parseInt(rows); i++) {
+          tableHtml += '<tr>';
+          for (var j = 0; j < parseInt(cols); j++) {
+            if (i === 0) {
+              tableHtml += '<th>Header</th>';
+            } else {
+              tableHtml += '<td>Cell</td>';
+            }
+          }
+          tableHtml += '</tr>';
+        }
+        tableHtml += '</tbody></table>';
+        document.execCommand('insertHTML', false, tableHtml);
+      }
+      
+      // Auto-save with debounce
+      var autoSaveTimer;
+      function autoSave() {
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = setTimeout(function() {
+          updateSystem();
+        }, 1000);
+      }
+      
+      // Keyboard shortcuts
+      document.getElementById('systemContent').addEventListener('keydown', function(e) {
+        if (e.ctrlKey || e.metaKey) {
+          switch (e.key.toLowerCase()) {
+            case 's':
+              e.preventDefault();
+              updateSystem();
+              break;
+          }
+        }
+      });
+      
+      // Paste image/video/file handler
+      document.getElementById('systemContent').addEventListener('paste', function(e) {
+        var clipboardData = e.clipboardData || window.clipboardData;
+        if (!clipboardData || !clipboardData.items) return;
+        
+        var items = clipboardData.items;
+        for (var i = 0; i < items.length; i++) {
+          var item = items[i];
+          if (item.kind === 'file') {
+            e.preventDefault();
+            var file = item.getAsFile();
+            if (file) {
+              uploadAndInsertMedia(file);
+            }
+            return;
+          }
+        }
+      });
+      
+      // Also handle drop events
+      document.getElementById('systemContent').addEventListener('drop', function(e) {
+        e.preventDefault();
+        var files = e.dataTransfer.files;
+        if (files && files.length > 0) {
+          uploadAndInsertMedia(files[0]);
+        }
+      });
+      
+      document.getElementById('systemContent').addEventListener('dragover', function(e) {
+        e.preventDefault();
+      });
+      
+      function uploadAndInsertMedia(file) {
+        if (!file) return;
+        
+        // Show uploading indicator with progress bar
+        var tempId = 'uploading-' + Date.now();
+        var uploadingHtml = '<div id="' + tempId + '" style="display: inline-block; background: #f1f5f9; padding: 8px 12px; border-radius: 6px; margin: 4px 0; min-width: 200px;">' +
+          '<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">' +
+            '<span style="color: #64748b;">⏳</span>' +
+            '<span style="color: #475569; font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + file.name + '</span>' +
+            '<span class="upload-percent" style="color: #3b82f6; font-weight: 600; font-size: 12px;">0%</span>' +
+          '</div>' +
+          '<div style="background: #e2e8f0; border-radius: 4px; height: 6px; overflow: hidden;">' +
+            '<div class="upload-progress-bar" style="background: linear-gradient(90deg, #3b82f6, #8b5cf6); height: 100%; width: 0%; transition: width 0.2s;"></div>' +
+          '</div>' +
+        '</div>';
+        document.execCommand('insertHTML', false, uploadingHtml);
+        
+        var formData = new FormData();
+        formData.append('files', file);
+        
+        var xhr = new XMLHttpRequest();
+        
+        xhr.upload.addEventListener('progress', function(e) {
+          if (e.lengthComputable) {
+            var percent = Math.round((e.loaded / e.total) * 100);
+            var uploadingEl = document.getElementById(tempId);
+            if (uploadingEl) {
+              var progressBar = uploadingEl.querySelector('.upload-progress-bar');
+              var percentText = uploadingEl.querySelector('.upload-percent');
+              if (progressBar) progressBar.style.width = percent + '%';
+              if (percentText) percentText.textContent = percent + '%';
+            }
+          }
+        });
+        
+        xhr.addEventListener('load', function() {
+          var uploadingEl = document.getElementById(tempId);
+          if (uploadingEl) uploadingEl.remove();
+          
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              var attachments = JSON.parse(xhr.responseText);
+              
+              if (attachments && attachments.length > 0) {
+                var att = attachments[0];
+                var url = '/uploads/' + att.filename;
+                var mimeType = att.mime_type || '';
+                var html;
+                
+                if (mimeType.startsWith('image/')) {
+                  html = '<div class="resizable-media" contenteditable="false"><img src="' + url + '" style="max-width: 100%; width: 400px;"><div class="resize-handle"></div></div>';
+                } else if (mimeType.startsWith('video/')) {
+                  html = '<div class="resizable-media" contenteditable="false"><video src="' + url + '" controls style="max-width: 100%; width: 400px;"></video><div class="resize-handle"></div></div>';
+                } else {
+                  // For other files, show a download link
+                  var icon = '📄';
+                  if (mimeType.startsWith('audio/')) icon = '🎵';
+                  else if (mimeType.includes('pdf')) icon = '📕';
+                  else if (mimeType.includes('zip') || mimeType.includes('rar') || mimeType.includes('7z')) icon = '📦';
+                  else if (mimeType.includes('word') || mimeType.includes('document')) icon = '📝';
+                  else if (mimeType.includes('excel') || mimeType.includes('spreadsheet')) icon = '📊';
+                  
+                  html = '<div class="inline-file" contenteditable="false"><a href="' + url + '" download="' + (att.original_name || att.filename) + '" class="file-download-link">' + icon + ' ' + (att.original_name || att.filename) + '</a></div>';
+                }
+                
+                // Insert at cursor position
+                var selection = window.getSelection();
+                if (selection.rangeCount > 0) {
+                  var range = selection.getRangeAt(0);
+                  var div = document.createElement('div');
+                  div.innerHTML = html + '<p><br></p>';
+                  var frag = document.createDocumentFragment();
+                  while (div.firstChild) {
+                    frag.appendChild(div.firstChild);
+                  }
+                  range.insertNode(frag);
+                  range.collapse(false);
+                } else {
+                  document.execCommand('insertHTML', false, html + '<p></p>');
+                }
+                
+                initResizeHandles();
+                autoSave();
+              }
+            } catch (e) {
+              console.error('Error parsing upload response:', e);
+            }
+          } else {
+            console.error('Upload failed with status:', xhr.status);
+            document.execCommand('insertHTML', false, '<span style="color: #ef4444;">❌ Upload failed</span>');
+          }
+        });
+        
+        xhr.addEventListener('error', function() {
+          console.error('Error uploading media');
+          var uploadingEl = document.getElementById(tempId);
+          if (uploadingEl) {
+            uploadingEl.innerHTML = '<span style="color: #ef4444;">❌ Upload failed</span>';
+          }
+        });
+        
+        xhr.open('POST', '/api/systems/' + systemId + '/attachments');
+        xhr.send(formData);
+      }
+      
+      // Resizable media functionality
+      function initResizeHandles() {
+        document.querySelectorAll('.resizable-media').forEach(function(wrapper) {
+          var handle = wrapper.querySelector('.resize-handle');
+          var media = wrapper.querySelector('img, video');
+          if (!handle || !media) return;
+          
+          handle.onmousedown = function(e) {
+            e.preventDefault();
+            var startX = e.clientX;
+            var startWidth = media.offsetWidth;
+            
+            function onMouseMove(e) {
+              var newWidth = startWidth + (e.clientX - startX);
+              if (newWidth > 50 && newWidth < 1200) {
+                media.style.width = newWidth + 'px';
+              }
+            }
+            
+            function onMouseUp() {
+              document.removeEventListener('mousemove', onMouseMove);
+              document.removeEventListener('mouseup', onMouseUp);
+              autoSave();
+            }
+            
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+          };
+        });
+      }
+      
+      // Initialize on load
+      initResizeHandles();
+      
+      async function updateSystem() {
+        var name = document.getElementById('systemName').value;
+        var description = document.getElementById('systemDescription').value;
+        var content = document.getElementById('systemContent').innerHTML;
+        
+        try {
+          await fetch('/api/systems/' + systemId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name: name, description: description, content: content })
+          });
+        } catch (e) {
+          console.error('Error updating system:', e);
+        }
+      }
+      
+      async function toggleTask(taskId, completed) {
+        try {
+          await fetch('/api/tasks/' + taskId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_completed: completed })
+          });
+          location.reload();
+        } catch (e) {
+          console.error('Error toggling task:', e);
+        }
+      }
+      
+      async function deleteTask(taskId) {
+        if (!confirm('Delete this task?')) return;
+        try {
+          await fetch('/api/tasks/' + taskId, { method: 'DELETE' });
+          location.reload();
+        } catch (e) {
+          console.error('Error deleting task:', e);
+        }
+      }
+      
+      async function deleteSystem() {
+        if (!confirm('Delete this system and all its tasks?')) return;
+        try {
+          await fetch('/api/systems/' + systemId, { method: 'DELETE' });
+          window.location.href = '/systems';
+        } catch (e) {
+          console.error('Error deleting system:', e);
+        }
+      }
+      
+      async function deleteAttachment(attId) {
+        if (!confirm('Delete this attachment?')) return;
+        try {
+          await fetch('/api/attachments/' + attId, { method: 'DELETE' });
+          location.reload();
+        } catch (e) {
+          console.error('Error deleting attachment:', e);
+        }
+      }
+      
+      // File upload
+      var uploadZone = document.getElementById('uploadZone');
+      uploadZone.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        this.classList.add('dragover');
+      });
+      uploadZone.addEventListener('dragleave', function() {
+        this.classList.remove('dragover');
+      });
+      uploadZone.addEventListener('drop', function(e) {
+        e.preventDefault();
+        this.classList.remove('dragover');
+        uploadFiles(e.dataTransfer.files);
+      });
+      
+      async function uploadFiles(files) {
+        var formData = new FormData();
+        for (var i = 0; i < files.length; i++) {
+          formData.append('files', files[i]);
+        }
+        try {
+          await fetch('/api/systems/' + systemId + '/attachments', {
+            method: 'POST',
+            body: formData
+          });
+          location.reload();
+        } catch (e) {
+          console.error('Error uploading files:', e);
+        }
+      }
+    </script>
+  </body>
+  </html>
+  `;
+}
+
+function taskDetailPage(opts) {
+  const { system, task, checklist, attachments, users, currentUser, admin, escapeHtml } = opts;
+  
+  const userOptions = (users || []).map(u => 
+    `<option value="${u.username}" ${task.assigned_to === u.username ? 'selected' : ''}>${u.username}</option>`
+  ).join('');
+  
+  const priorityOptions = ['low', 'medium', 'high', 'urgent'].map(p => 
+    `<option value="${p}" ${task.priority === p ? 'selected' : ''}>${p.charAt(0).toUpperCase() + p.slice(1)}</option>`
+  ).join('');
+  
+  const tags = task.tags ? task.tags.split(',').map(t => 
+    `<span class="tag">${escapeHtml(t.trim())}</span>`
+  ).join('') : '';
+  
+  const checklistItems = (checklist || []).map(item => `
+    <div class="checklist-item" data-item-id="${item.id}">
+      <input type="checkbox" ${item.is_completed ? 'checked' : ''} onchange="toggleChecklistItem(${item.id}, this.checked)">
+      <span class="checklist-title ${item.is_completed ? 'completed' : ''}">${escapeHtml(item.title)}</span>
+      ${item.completed_by ? `<span class="checklist-completed-by">by ${escapeHtml(item.completed_by)}</span>` : ''}
+      <button class="btn btn-icon btn-sm" onclick="deleteChecklistItem(${item.id})" style="opacity: 0.5;">&times;</button>
+    </div>
+  `).join('');
+  
+  const attachmentsList = (attachments || []).map(att => `
+    <div class="attachment-item">
+      <a href="/uploads/${att.filename}" target="_blank" class="attachment-link">
+        ${att.mime_type && att.mime_type.startsWith('image/') ? 
+          `<img src="/uploads/${att.filename}" class="attachment-preview" alt="${escapeHtml(att.original_name)}">` :
+          att.mime_type && att.mime_type.startsWith('video/') ?
+          `<video src="/uploads/${att.filename}" class="attachment-preview"></video>` :
+          `<div class="attachment-icon">📎</div>`
+        }
+        <span class="attachment-name">${escapeHtml(att.original_name)}</span>
+      </a>
+      <button class="btn btn-icon btn-danger btn-sm" onclick="deleteAttachment(${att.id})">🗑</button>
+    </div>
+  `).join('');
+  
+  const priorityClass = {
+    low: 'badge-gray',
+    medium: 'badge-blue',
+    high: 'badge-yellow',
+    urgent: 'badge-red'
+  }[task.priority || 'medium'];
+  
+  return `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <title>${escapeHtml(task.title)} - ${escapeHtml(system.name)}</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      ${systemsBaseCss()}
+      
+      .task-header {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 16px;
+        padding: 24px;
+        margin-bottom: 24px;
+      }
+      .task-title-row { display: flex; align-items: flex-start; gap: 16px; margin-bottom: 16px; }
+      .task-title { margin: 0; font-size: 28px; flex: 1; }
+      .task-title input {
+        font-size: 28px;
+        font-weight: 700;
+        border: none;
+        background: none;
+        width: 100%;
+        padding: 0;
+      }
+      .task-title input:focus { outline: none; }
+      
+      .task-status-bar {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 16px;
+        background: #f8fafc;
+        border-radius: 8px;
+        margin-bottom: 16px;
+        flex-wrap: wrap;
+      }
+      .status-item { display: flex; align-items: center; gap: 8px; }
+      .status-label { font-size: 12px; color: #64748b; font-weight: 600; text-transform: uppercase; }
+      
+      .task-description textarea {
+        width: 100%;
+        border: 1px solid #e2e8f0;
+        background: white;
+        border-radius: 8px;
+        padding: 16px;
+        font-size: 15px;
+        font-family: inherit;
+        resize: vertical;
+        min-height: 100px;
+        line-height: 1.6;
+      }
+      .task-description textarea:focus { outline: 2px solid #2563eb; }
+      
+      .content-section {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        margin-bottom: 24px;
+      }
+      .section-header {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 16px 20px;
+        border-bottom: 1px solid #e2e8f0;
+      }
+      .section-title { margin: 0; font-size: 16px; flex: 1; }
+      .section-body { padding: 16px 20px; }
+      
+      .rich-editor-wrapper {
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .rich-editor-wrapper:focus-within {
+        border-color: #2563eb;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+      }
+      
+      .formatting-toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 2px;
+        padding: 8px 12px;
+        background: #f8fafc;
+        border-bottom: 1px solid #e2e8f0;
+        align-items: center;
+      }
+      .toolbar-group {
+        display: flex;
+        gap: 2px;
+        align-items: center;
+      }
+      .toolbar-divider {
+        width: 1px;
+        height: 24px;
+        background: #e2e8f0;
+        margin: 0 8px;
+      }
+      .toolbar-btn {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        width: 32px;
+        height: 32px;
+        border: none;
+        background: transparent;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        color: #475569;
+        transition: all 0.15s;
+      }
+      .toolbar-btn:hover { background: #e2e8f0; color: #0f172a; }
+      .toolbar-btn.active { background: #dbeafe; color: #2563eb; }
+      .toolbar-select {
+        height: 32px;
+        padding: 0 8px;
+        border: 1px solid #e2e8f0;
+        border-radius: 4px;
+        background: white;
+        font-size: 13px;
+        cursor: pointer;
+        min-width: 100px;
+      }
+      .toolbar-select:hover { border-color: #94a3b8; }
+      .toolbar-color-input {
+        width: 24px;
+        height: 24px;
+        padding: 0;
+        border: 2px solid #e2e8f0;
+        border-radius: 4px;
+        cursor: pointer;
+        background: transparent;
+      }
+      
+      .rich-editor {
+        min-height: 200px;
+        padding: 16px;
+        font-size: 15px;
+        line-height: 1.7;
+        outline: none;
+      }
+      .rich-editor h1 { font-size: 28px; font-weight: 700; margin: 0 0 16px; }
+      .rich-editor h2 { font-size: 22px; font-weight: 600; margin: 0 0 14px; }
+      .rich-editor h3 { font-size: 18px; font-weight: 600; margin: 0 0 12px; }
+      .rich-editor p { margin: 0 0 12px; }
+      .rich-editor ul, .rich-editor ol { margin: 0 0 12px; padding-left: 24px; }
+      .rich-editor blockquote { margin: 0 0 12px; padding: 12px 16px; border-left: 4px solid #2563eb; background: #f1f5f9; }
+      .rich-editor pre { margin: 0 0 12px; padding: 16px; background: #1e293b; color: #e2e8f0; border-radius: 8px; font-family: monospace; font-size: 13px; }
+      .rich-editor code { background: #f1f5f9; padding: 2px 6px; border-radius: 4px; font-family: monospace; }
+      .rich-editor table { border-collapse: collapse; width: 100%; margin: 12px 0; }
+      .rich-editor th, .rich-editor td { border: 1px solid #e2e8f0; padding: 8px 12px; }
+      .rich-editor th { background: #f8fafc; font-weight: 600; }
+      .rich-editor img { max-width: 100%; height: auto; border-radius: 8px; }
+      .rich-editor video { max-width: 100%; border-radius: 8px; }
+      
+      .resizable-media {
+        display: inline-block;
+        position: relative;
+        margin: 8px 0;
+        user-select: none;
+      }
+      .resizable-media img, .resizable-media video {
+        display: block;
+        border-radius: 8px;
+      }
+      .resizable-media:hover .resize-handle,
+      .resizable-media:focus-within .resize-handle {
+        opacity: 1;
+      }
+      .resize-handle {
+        position: absolute;
+        right: -6px;
+        bottom: -6px;
+        width: 16px;
+        height: 16px;
+        background: #2563eb;
+        border: 2px solid white;
+        border-radius: 4px;
+        cursor: se-resize;
+        opacity: 0;
+        transition: opacity 0.15s;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+      }
+      .resize-handle::before {
+        content: '';
+        position: absolute;
+        top: 3px;
+        left: 3px;
+        width: 6px;
+        height: 6px;
+        border-right: 2px solid white;
+        border-bottom: 2px solid white;
+      }
+      
+      .inline-file {
+        display: inline-block;
+        margin: 8px 0;
+      }
+      .file-download-link {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 10px 16px;
+        background: #f1f5f9;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        color: #1e293b;
+        text-decoration: none;
+        font-size: 14px;
+        font-weight: 500;
+        transition: all 0.15s;
+      }
+      .file-download-link:hover {
+        background: #e2e8f0;
+        border-color: #cbd5e1;
+        text-decoration: none;
+      }
+      
+      .checklist-item {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        padding: 10px 0;
+        border-bottom: 1px solid #f1f5f9;
+      }
+      .checklist-item:last-child { border-bottom: none; }
+      .checklist-item input[type="checkbox"] { width: 18px; height: 18px; cursor: pointer; }
+      .checklist-title { flex: 1; font-size: 14px; }
+      .checklist-title.completed { text-decoration: line-through; color: #94a3b8; }
+      .checklist-completed-by { font-size: 11px; color: #94a3b8; }
+      
+      .add-checklist-form {
+        display: flex;
+        gap: 8px;
+        padding-top: 12px;
+        margin-top: 12px;
+        border-top: 1px solid #e2e8f0;
+      }
+      .add-checklist-form input { flex: 1; }
+      
+      .attachments-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+        gap: 12px;
+      }
+      .attachment-item {
+        position: relative;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        overflow: hidden;
+      }
+      .attachment-link { display: block; text-decoration: none; color: inherit; }
+      .attachment-preview { width: 100%; height: 100px; object-fit: cover; }
+      .attachment-icon { height: 100px; display: flex; align-items: center; justify-content: center; font-size: 32px; background: #f8fafc; }
+      .attachment-name { display: block; padding: 8px; font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .attachment-item .btn { position: absolute; top: 4px; right: 4px; }
+      
+      .upload-zone {
+        border: 2px dashed #e2e8f0;
+        border-radius: 8px;
+        padding: 24px;
+        text-align: center;
+        cursor: pointer;
+        transition: all 0.15s;
+      }
+      .upload-zone:hover { border-color: #2563eb; background: #f8fafc; }
+      
+      ${task.is_completed ? `
+        .task-header { border-left: 5px solid #22c55e; }
+      ` : ''}
+    </style>
+  </head>
+  <body>
+    <nav class="navbar">
+      <a href="/" class="navbar-brand">Daily Logger</a>
+      <div class="navbar-links">
+        <a href="/">Home</a>
+        <a href="/systems">Systems</a>
+        <a href="/systems/history">History</a>
+        ${admin ? '<a href="/admin">Admin</a>' : ''}
+      </div>
+    </nav>
+    
+    <div class="container">
+      <div style="margin-bottom: 16px; display: flex; gap: 8px;">
+        <a href="/systems/${system.id}" class="btn btn-secondary btn-sm">← Back to ${escapeHtml(system.name)}</a>
+      </div>
+      
+      <!-- Task Header -->
+      <div class="task-header">
+        <div class="task-title-row">
+          <div style="margin-right: 12px;">
+            <input type="checkbox" id="taskCompleted" ${task.is_completed ? 'checked' : ''} style="width: 24px; height: 24px; cursor: pointer;" onchange="toggleCompleted(this.checked)">
+          </div>
+          <h1 class="task-title">
+            <input type="text" id="taskTitle" value="${escapeHtml(task.title)}" onblur="updateTask()">
+          </h1>
+          <button class="btn btn-danger" onclick="deleteTask()">Delete</button>
+        </div>
+        
+        <div class="task-status-bar">
+          <div class="status-item">
+            <span class="status-label">Status</span>
+            <span class="badge ${task.is_completed ? 'badge-green' : 'badge-blue'}">${task.is_completed ? 'Completed' : 'Open'}</span>
+          </div>
+          <div class="status-item">
+            <span class="status-label">Priority</span>
+            <select id="taskPriority" class="form-select" style="width: auto;" onchange="updateTask()">
+              ${priorityOptions}
+            </select>
+          </div>
+          <div class="status-item">
+            <span class="status-label">Assigned To</span>
+            <select id="taskAssignedTo" class="form-select" style="width: auto;" onchange="updateTask()">
+              <option value="">Unassigned</option>
+              ${userOptions}
+            </select>
+          </div>
+          <div class="status-item">
+            <span class="status-label">Due Date</span>
+            <input type="date" id="taskDueDate" class="form-input" style="width: auto;" value="${task.due_date || ''}" onchange="updateTask()">
+          </div>
+        </div>
+        
+        ${task.completed_by && task.is_completed ? `
+          <div style="font-size: 13px; color: #22c55e;">
+            ✓ Completed by ${escapeHtml(task.completed_by)} on ${task.completed_at ? new Date(task.completed_at).toLocaleString() : ''}
+          </div>
+        ` : ''}
+        
+        ${tags ? `<div class="system-tags" style="margin-top: 12px;">${tags}</div>` : ''}
+      </div>
+      
+      <!-- Description Section -->
+      <div class="content-section">
+        <div class="section-header">
+          <h2 class="section-title">📝 Description</h2>
+        </div>
+        <div class="section-body">
+          <div class="task-description">
+            <textarea id="taskDescription" placeholder="Add a detailed description..." onblur="updateTask()">${escapeHtml(task.description || '')}</textarea>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Content Section (rich text like Google Docs) -->
+      <div class="content-section">
+        <div class="section-header">
+          <h2 class="section-title">📄 Content</h2>
+        </div>
+        <div class="section-body">
+          <div class="rich-editor-wrapper">
+            <div class="formatting-toolbar">
+              <div class="toolbar-group">
+                <select class="toolbar-select" onchange="formatBlock(this.value); this.value='';" title="Text Style">
+                  <option value="">Style</option>
+                  <option value="h1">Heading 1</option>
+                  <option value="h2">Heading 2</option>
+                  <option value="h3">Heading 3</option>
+                  <option value="p">Paragraph</option>
+                  <option value="pre">Code Block</option>
+                  <option value="blockquote">Quote</option>
+                </select>
+              </div>
+              <div class="toolbar-divider"></div>
+              <div class="toolbar-group">
+                <button type="button" class="toolbar-btn" onclick="execCmd('bold')" title="Bold"><b>B</b></button>
+                <button type="button" class="toolbar-btn" onclick="execCmd('italic')" title="Italic"><i>I</i></button>
+                <button type="button" class="toolbar-btn" onclick="execCmd('underline')" title="Underline"><u>U</u></button>
+                <button type="button" class="toolbar-btn" onclick="execCmd('strikeThrough')" title="Strikethrough"><s>S</s></button>
+              </div>
+              <div class="toolbar-divider"></div>
+              <div class="toolbar-group">
+                <input type="color" class="toolbar-color-input" value="#000000" onchange="execCmd('foreColor', this.value)" title="Text Color">
+                <input type="color" class="toolbar-color-input" value="#ffffff" onchange="execCmd('backColor', this.value)" title="Highlight">
+              </div>
+              <div class="toolbar-divider"></div>
+              <div class="toolbar-group">
+                <button type="button" class="toolbar-btn" onclick="execCmd('insertUnorderedList')" title="Bullet List">•≡</button>
+                <button type="button" class="toolbar-btn" onclick="execCmd('insertOrderedList')" title="Numbered List">1.</button>
+              </div>
+              <div class="toolbar-divider"></div>
+              <div class="toolbar-group">
+                <button type="button" class="toolbar-btn" onclick="insertLink()" title="Insert Link">🔗</button>
+                <button type="button" class="toolbar-btn" onclick="triggerFileUpload('image')" title="Upload Image">🖼️</button>
+                <button type="button" class="toolbar-btn" onclick="triggerFileUpload('video')" title="Upload Video">🎬</button>
+                <button type="button" class="toolbar-btn" onclick="triggerFileUpload('file')" title="Upload File">📎</button>
+                <button type="button" class="toolbar-btn" onclick="execCmd('removeFormat')" title="Clear Formatting">✖</button>
+                <input type="file" id="inlineFileInput" style="display:none" onchange="handleFileUpload(this)" accept="*/*">
+              </div>
+            </div>
+            <div class="rich-editor" contenteditable="true" id="taskContent" onblur="updateTask()" oninput="autoSave()">${task.content || ''}</div>
+          </div>
+        </div>
+      </div>
+      
+      <!-- Checklist Section -->
+      <div class="content-section">
+        <div class="section-header">
+          <h2 class="section-title">☑️ Checklist (${(checklist || []).length})</h2>
+        </div>
+        <div class="section-body">
+          ${(checklist || []).length > 0 ? `
+            <div class="checklist-items">
+              ${checklistItems}
+            </div>
+          ` : `
+            <p style="color: #94a3b8; font-size: 14px;">No checklist items yet.</p>
+          `}
+          <form class="add-checklist-form" onsubmit="addChecklistItem(event)">
+            <input type="text" id="newChecklistItem" class="form-input" placeholder="Add checklist item...">
+            <button type="submit" class="btn btn-primary btn-sm">Add</button>
+          </form>
+        </div>
+      </div>
+      
+      <!-- Attachments Section -->
+      <div class="content-section">
+        <div class="section-header">
+          <h2 class="section-title">📎 Attachments (${(attachments || []).length})</h2>
+        </div>
+        <div class="section-body">
+          ${(attachments || []).length > 0 ? `
+            <div class="attachments-grid" style="margin-bottom: 16px;">
+              ${attachmentsList}
+            </div>
+          ` : ''}
+          <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
+            <input type="file" id="fileInput" multiple style="display: none;" onchange="uploadFiles(this.files)">
+            <p style="margin: 0; color: #64748b;">Drop files here or click to upload</p>
+            <p style="margin: 4px 0 0; font-size: 12px; color: #94a3b8;">Images, videos, documents</p>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <script>
+      var systemId = ${system.id};
+      var taskId = ${task.id};
+      
+      // Rich Text Editor Functions
+      function execCmd(command, value) {
+        document.execCommand(command, false, value || null);
+        document.getElementById('taskContent').focus();
+      }
+      
+      function formatBlock(tag) {
+        if (tag) {
+          document.execCommand('formatBlock', false, '<' + tag + '>');
+          document.getElementById('taskContent').focus();
+        }
+      }
+      
+      function insertLink() {
+        var url = prompt('Enter URL:', 'https://');
+        if (url) {
+          var selection = window.getSelection();
+          var text = selection.toString() || url;
+          document.execCommand('insertHTML', false, '<a href="' + url + '" target="_blank">' + text + '</a>');
+        }
+      }
+      
+      var currentUploadType = 'file';
+      function triggerFileUpload(type) {
+        currentUploadType = type;
+        var input = document.getElementById('inlineFileInput');
+        if (type === 'image') {
+          input.accept = 'image/*';
+        } else if (type === 'video') {
+          input.accept = 'video/*';
+        } else {
+          input.accept = '*/*';
+        }
+        input.click();
+      }
+      
+      async function handleFileUpload(input) {
+        if (!input.files || !input.files.length) return;
+        var file = input.files[0];
+        await uploadAndInsertMedia(file);
+        input.value = '';
+      }
+      
+      // Auto-save with debounce
+      var autoSaveTimer;
+      function autoSave() {
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = setTimeout(function() {
+          updateTask();
+        }, 1000);
+      }
+      
+      // Paste image/video/file handler
+      document.getElementById('taskContent').addEventListener('paste', function(e) {
+        var clipboardData = e.clipboardData || window.clipboardData;
+        if (!clipboardData || !clipboardData.items) return;
+        
+        var items = clipboardData.items;
+        for (var i = 0; i < items.length; i++) {
+          var item = items[i];
+          if (item.kind === 'file') {
+            e.preventDefault();
+            var file = item.getAsFile();
+            if (file) {
+              uploadAndInsertMedia(file);
+            }
+            return;
+          }
+        }
+      });
+      
+      // Also handle drop events
+      document.getElementById('taskContent').addEventListener('drop', function(e) {
+        e.preventDefault();
+        var files = e.dataTransfer.files;
+        if (files && files.length > 0) {
+          uploadAndInsertMedia(files[0]);
+        }
+      });
+      
+      document.getElementById('taskContent').addEventListener('dragover', function(e) {
+        e.preventDefault();
+      });
+      
+      function uploadAndInsertMedia(file) {
+        if (!file) return;
+        
+        // Show uploading indicator with progress bar
+        var tempId = 'uploading-' + Date.now();
+        var uploadingHtml = '<div id="' + tempId + '" style="display: inline-block; background: #f1f5f9; padding: 8px 12px; border-radius: 6px; margin: 4px 0; min-width: 200px;">' +
+          '<div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">' +
+            '<span style="color: #64748b;">⏳</span>' +
+            '<span style="color: #475569; font-size: 13px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">' + file.name + '</span>' +
+            '<span class="upload-percent" style="color: #3b82f6; font-weight: 600; font-size: 12px;">0%</span>' +
+          '</div>' +
+          '<div style="background: #e2e8f0; border-radius: 4px; height: 6px; overflow: hidden;">' +
+            '<div class="upload-progress-bar" style="background: linear-gradient(90deg, #3b82f6, #8b5cf6); height: 100%; width: 0%; transition: width 0.2s;"></div>' +
+          '</div>' +
+        '</div>';
+        document.execCommand('insertHTML', false, uploadingHtml);
+        
+        var formData = new FormData();
+        formData.append('files', file);
+        
+        var xhr = new XMLHttpRequest();
+        
+        xhr.upload.addEventListener('progress', function(e) {
+          if (e.lengthComputable) {
+            var percent = Math.round((e.loaded / e.total) * 100);
+            var uploadingEl = document.getElementById(tempId);
+            if (uploadingEl) {
+              var progressBar = uploadingEl.querySelector('.upload-progress-bar');
+              var percentText = uploadingEl.querySelector('.upload-percent');
+              if (progressBar) progressBar.style.width = percent + '%';
+              if (percentText) percentText.textContent = percent + '%';
+            }
+          }
+        });
+        
+        xhr.addEventListener('load', function() {
+          var uploadingEl = document.getElementById(tempId);
+          if (uploadingEl) uploadingEl.remove();
+          
+          if (xhr.status >= 200 && xhr.status < 300) {
+            try {
+              var attachments = JSON.parse(xhr.responseText);
+              
+              if (attachments && attachments.length > 0) {
+                var att = attachments[0];
+                var url = '/uploads/' + att.filename;
+                var mimeType = att.mime_type || '';
+                var html;
+                
+                if (mimeType.startsWith('image/')) {
+                  html = '<div class="resizable-media" contenteditable="false"><img src="' + url + '" style="max-width: 100%; width: 400px;"><div class="resize-handle"></div></div>';
+                } else if (mimeType.startsWith('video/')) {
+                  html = '<div class="resizable-media" contenteditable="false"><video src="' + url + '" controls style="max-width: 100%; width: 400px;"></video><div class="resize-handle"></div></div>';
+                } else {
+                  // For other files, show a download link
+                  var icon = '📄';
+                  if (mimeType.startsWith('audio/')) icon = '🎵';
+                  else if (mimeType.includes('pdf')) icon = '📕';
+                  else if (mimeType.includes('zip') || mimeType.includes('rar') || mimeType.includes('7z')) icon = '📦';
+                  else if (mimeType.includes('word') || mimeType.includes('document')) icon = '📝';
+                  else if (mimeType.includes('excel') || mimeType.includes('spreadsheet')) icon = '📊';
+                  
+                  html = '<div class="inline-file" contenteditable="false"><a href="' + url + '" download="' + (att.original_name || att.filename) + '" class="file-download-link">' + icon + ' ' + (att.original_name || att.filename) + '</a></div>';
+                }
+                
+                // Insert at cursor position
+                var selection = window.getSelection();
+                if (selection.rangeCount > 0) {
+                  var range = selection.getRangeAt(0);
+                  var div = document.createElement('div');
+                  div.innerHTML = html + '<p><br></p>';
+                  var frag = document.createDocumentFragment();
+                  while (div.firstChild) {
+                    frag.appendChild(div.firstChild);
+                  }
+                  range.insertNode(frag);
+                  range.collapse(false);
+                } else {
+                  document.execCommand('insertHTML', false, html + '<p></p>');
+                }
+                
+                initResizeHandles();
+                autoSave();
+              }
+            } catch (e) {
+              console.error('Error parsing upload response:', e);
+            }
+          } else {
+            console.error('Upload failed with status:', xhr.status);
+            document.execCommand('insertHTML', false, '<span style="color: #ef4444;">❌ Upload failed</span>');
+          }
+        });
+        
+        xhr.addEventListener('error', function() {
+          console.error('Error uploading media');
+          var uploadingEl = document.getElementById(tempId);
+          if (uploadingEl) {
+            uploadingEl.innerHTML = '<span style="color: #ef4444;">❌ Upload failed</span>';
+          }
+        });
+        
+        xhr.open('POST', '/api/tasks/' + taskId + '/attachments');
+        xhr.send(formData);
+      }
+      
+      // Resizable media functionality
+      function initResizeHandles() {
+        document.querySelectorAll('.resizable-media').forEach(function(wrapper) {
+          var handle = wrapper.querySelector('.resize-handle');
+          var media = wrapper.querySelector('img, video');
+          if (!handle || !media) return;
+          
+          handle.onmousedown = function(e) {
+            e.preventDefault();
+            var startX = e.clientX;
+            var startWidth = media.offsetWidth;
+            
+            function onMouseMove(e) {
+              var newWidth = startWidth + (e.clientX - startX);
+              if (newWidth > 50 && newWidth < 1200) {
+                media.style.width = newWidth + 'px';
+              }
+            }
+            
+            function onMouseUp() {
+              document.removeEventListener('mousemove', onMouseMove);
+              document.removeEventListener('mouseup', onMouseUp);
+              autoSave();
+            }
+            
+            document.addEventListener('mousemove', onMouseMove);
+            document.addEventListener('mouseup', onMouseUp);
+          };
+        });
+      }
+      
+      // Initialize on load
+      initResizeHandles();
+      
+      async function updateTask() {
+        var data = {
+          title: document.getElementById('taskTitle').value,
+          description: document.getElementById('taskDescription').value,
+          content: document.getElementById('taskContent').innerHTML,
+          priority: document.getElementById('taskPriority').value,
+          assigned_to: document.getElementById('taskAssignedTo').value,
+          due_date: document.getElementById('taskDueDate').value
+        };
+        try {
+          await fetch('/api/tasks/' + taskId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(data)
+          });
+        } catch (e) {
+          console.error('Error updating task:', e);
+        }
+      }
+      
+      async function toggleCompleted(completed) {
+        try {
+          await fetch('/api/tasks/' + taskId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_completed: completed })
+          });
+          location.reload();
+        } catch (e) {
+          console.error('Error toggling task:', e);
+        }
+      }
+      
+      async function deleteTask() {
+        if (!confirm('Delete this task?')) return;
+        try {
+          await fetch('/api/tasks/' + taskId, { method: 'DELETE' });
+          window.location.href = '/systems/' + systemId;
+        } catch (e) {
+          console.error('Error deleting task:', e);
+        }
+      }
+      
+      async function addChecklistItem(e) {
+        e.preventDefault();
+        var input = document.getElementById('newChecklistItem');
+        var title = input.value.trim();
+        if (!title) return;
+        try {
+          await fetch('/api/tasks/' + taskId + '/checklist', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ title: title })
+          });
+          input.value = '';
+          location.reload();
+        } catch (e) {
+          console.error('Error adding checklist item:', e);
+        }
+      }
+      
+      async function toggleChecklistItem(itemId, completed) {
+        try {
+          await fetch('/api/checklist/' + itemId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_completed: completed })
+          });
+          location.reload();
+        } catch (e) {
+          console.error('Error toggling checklist item:', e);
+        }
+      }
+      
+      async function deleteChecklistItem(itemId) {
+        try {
+          await fetch('/api/checklist/' + itemId, { method: 'DELETE' });
+          location.reload();
+        } catch (e) {
+          console.error('Error deleting checklist item:', e);
+        }
+      }
+      
+      async function deleteAttachment(attId) {
+        if (!confirm('Delete this attachment?')) return;
+        try {
+          await fetch('/api/attachments/' + attId, { method: 'DELETE' });
+          location.reload();
+        } catch (e) {
+          console.error('Error deleting attachment:', e);
+        }
+      }
+      
+      // File upload
+      var uploadZone = document.getElementById('uploadZone');
+      uploadZone.addEventListener('dragover', function(e) {
+        e.preventDefault();
+        this.classList.add('dragover');
+      });
+      uploadZone.addEventListener('dragleave', function() {
+        this.classList.remove('dragover');
+      });
+      uploadZone.addEventListener('drop', function(e) {
+        e.preventDefault();
+        this.classList.remove('dragover');
+        uploadFiles(e.dataTransfer.files);
+      });
+      
+      async function uploadFiles(files) {
+        var formData = new FormData();
+        for (var i = 0; i < files.length; i++) {
+          formData.append('files', files[i]);
+        }
+        try {
+          await fetch('/api/tasks/' + taskId + '/attachments', {
+            method: 'POST',
+            body: formData
+          });
+          location.reload();
+        } catch (e) {
+          console.error('Error uploading files:', e);
+        }
+      }
+    </script>
+  </body>
+  </html>
+  `;
+}
+
+function historyPage(opts) {
+  const { history, currentUser, admin, escapeHtml } = opts;
+  
+  const historyItems = (history || []).map(h => {
+    const date = new Date(h.changed_at);
+    const dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    const timeStr = date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
+    
+    const isSystem = h.type === 'system';
+    const itemName = isSystem ? (h.current_name || h.name) : (h.current_title || h.title);
+    const itemLink = isSystem ? `/systems/${h.system_id}` : `/systems/${h.system_id}/tasks/${h.task_id}`;
+    const typeLabel = isSystem ? 'System' : 'Task';
+    const typeBadge = isSystem ? 'badge-blue' : 'badge-green';
+    
+    return `
+      <div class="history-item">
+        <div class="history-meta">
+          <span class="badge ${typeBadge}">${typeLabel}</span>
+          <span class="history-date">${dateStr} at ${timeStr}</span>
+          <span class="history-user">by ${escapeHtml(h.changed_by || 'Unknown')}</span>
+        </div>
+        <div class="history-content">
+          <a href="${itemLink}" class="history-name">${escapeHtml(itemName || 'Deleted')}</a>
+          ${!isSystem && h.system_name ? `<span class="history-system">in ${escapeHtml(h.system_name)}</span>` : ''}
+        </div>
+        <div class="history-actions">
+          <button class="btn btn-secondary btn-sm" onclick="viewHistoryDetail(${h.id}, '${h.type}')">View</button>
+          <button class="btn btn-primary btn-sm" onclick="revertTo(${isSystem ? h.system_id : h.task_id}, ${h.id}, '${h.type}')">Revert</button>
+        </div>
+      </div>
+    `;
+  }).join('');
+  
+  return `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <title>Edit History - Daily Logger</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+      ${systemsBaseCss()}
+      
+      .history-list {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+      }
+      .history-item {
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 12px;
+        padding: 16px 20px;
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      .history-meta {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        font-size: 13px;
+        color: #64748b;
+      }
+      .history-content {
+        flex: 1;
+        min-width: 200px;
+      }
+      .history-name {
+        font-size: 15px;
+        font-weight: 600;
+        color: #0f172a;
+        text-decoration: none;
+      }
+      .history-name:hover { color: #2563eb; }
+      .history-system {
+        font-size: 13px;
+        color: #64748b;
+        margin-left: 8px;
+      }
+      .history-actions {
+        display: flex;
+        gap: 8px;
+      }
+      
+      .modal-overlay {
+        display: none;
+        position: fixed;
+        inset: 0;
+        background: rgba(0,0,0,0.5);
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+        z-index: 1000;
+      }
+      .modal-overlay.active { display: flex; }
+      .modal-box {
+        background: white;
+        border-radius: 16px;
+        width: 100%;
+        max-width: 800px;
+        max-height: 80vh;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+      .modal-header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 20px;
+        border-bottom: 1px solid #e2e8f0;
+      }
+      .modal-header h2 { margin: 0; font-size: 18px; }
+      .modal-body {
+        padding: 20px;
+        overflow-y: auto;
+        flex: 1;
+      }
+      .modal-body pre {
+        background: #f8fafc;
+        padding: 16px;
+        border-radius: 8px;
+        overflow-x: auto;
+        white-space: pre-wrap;
+        word-break: break-word;
+        font-size: 13px;
+      }
+      .detail-row {
+        margin-bottom: 16px;
+      }
+      .detail-label {
+        font-size: 12px;
+        font-weight: 600;
+        color: #64748b;
+        text-transform: uppercase;
+        margin-bottom: 4px;
+      }
+      .detail-value {
+        font-size: 14px;
+        color: #0f172a;
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="navbar">
+      <a href="/" class="navbar-brand">Daily Logger</a>
+      <div class="navbar-links">
+        <a href="/">Home</a>
+        <a href="/systems">Systems</a>
+        <a href="/systems/history" class="active">History</a>
+      </div>
+    </nav>
+    
+    <div class="container">
+      <div class="page-header">
+        <h1 class="page-title">📜 Edit History</h1>
+        <span style="color: #64748b; font-size: 14px;">View and revert changes to systems and tasks</span>
+      </div>
+      
+      ${history.length > 0 ? `
+        <div class="history-list">
+          ${historyItems}
+        </div>
+      ` : `
+        <div class="empty-state">
+          <h3>No history yet</h3>
+          <p>Changes to systems and tasks will appear here.</p>
+        </div>
+      `}
+    </div>
+    
+    <div class="modal-overlay" id="detailModal">
+      <div class="modal-box">
+        <div class="modal-header">
+          <h2>History Details</h2>
+          <button class="btn btn-icon btn-secondary" onclick="closeModal()">&times;</button>
+        </div>
+        <div class="modal-body" id="detailContent">
+          <!-- Content loaded dynamically -->
+        </div>
+      </div>
+    </div>
+    
+    <script>
+      async function viewHistoryDetail(historyId, type) {
+        var modal = document.getElementById('detailModal');
+        var content = document.getElementById('detailContent');
+        content.innerHTML = '<p style="color: #64748b;">Loading...</p>';
+        modal.classList.add('active');
+        
+        try {
+          var endpoint = type === 'system' 
+            ? '/api/history/system/' + historyId 
+            : '/api/history/task/' + historyId;
+          
+          var response = await fetch(endpoint);
+          if (!response.ok) throw new Error('Failed to load');
+          var data = await response.json();
+          
+          var date = new Date(data.changed_at);
+          var dateStr = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric', hour: 'numeric', minute: '2-digit' });
+          
+          if (type === 'system') {
+            content.innerHTML = \`
+              <div class="detail-row">
+                <div class="detail-label">Changed At</div>
+                <div class="detail-value">\${dateStr}</div>
+              </div>
+              <div class="detail-row">
+                <div class="detail-label">Changed By</div>
+                <div class="detail-value">\${data.changed_by || 'Unknown'}</div>
+              </div>
+              <div class="detail-row">
+                <div class="detail-label">Name</div>
+                <div class="detail-value">\${data.name || '(empty)'}</div>
+              </div>
+              <div class="detail-row">
+                <div class="detail-label">Description</div>
+                <div class="detail-value">\${data.description || '(empty)'}</div>
+              </div>
+              <div class="detail-row">
+                <div class="detail-label">Tags</div>
+                <div class="detail-value">\${data.tags || '(none)'}</div>
+              </div>
+              <div class="detail-row">
+                <div class="detail-label">Content</div>
+                <div style="background: #f8fafc; padding: 16px; border-radius: 8px; margin-top: 4px; max-height: 300px; overflow-y: auto;">\${data.content || '<p style="color: #94a3b8;">(empty)</p>'}</div>
+              </div>
+            \`;
+          } else {
+            content.innerHTML = \`
+              <div class="detail-row">
+                <div class="detail-label">Changed At</div>
+                <div class="detail-value">\${dateStr}</div>
+              </div>
+              <div class="detail-row">
+                <div class="detail-label">Changed By</div>
+                <div class="detail-value">\${data.changed_by || 'Unknown'}</div>
+              </div>
+              <div class="detail-row">
+                <div class="detail-label">Title</div>
+                <div class="detail-value">\${data.title || '(empty)'}</div>
+              </div>
+              <div class="detail-row">
+                <div class="detail-label">Description</div>
+                <div class="detail-value">\${data.description || '(empty)'}</div>
+              </div>
+              <div class="detail-row">
+                <div class="detail-label">Assigned To</div>
+                <div class="detail-value">\${data.assigned_to || '(unassigned)'}</div>
+              </div>
+              <div class="detail-row">
+                <div class="detail-label">Priority</div>
+                <div class="detail-value">\${data.priority || 'medium'}</div>
+              </div>
+              <div class="detail-row">
+                <div class="detail-label">Due Date</div>
+                <div class="detail-value">\${data.due_date || '(none)'}</div>
+              </div>
+              <div class="detail-row">
+                <div class="detail-label">Tags</div>
+                <div class="detail-value">\${data.tags || '(none)'}</div>
+              </div>
+              <div class="detail-row">
+                <div class="detail-label">Completed</div>
+                <div class="detail-value">\${data.is_completed ? 'Yes' : 'No'}</div>
+              </div>
+              <div class="detail-row">
+                <div class="detail-label">Content</div>
+                <div style="background: #f8fafc; padding: 16px; border-radius: 8px; margin-top: 4px; max-height: 300px; overflow-y: auto;">\${data.content || '<p style="color: #94a3b8;">(empty)</p>'}</div>
+              </div>
+            \`;
+          }
+        } catch (e) {
+          console.error('Error loading history:', e);
+          content.innerHTML = '<p style="color: #dc2626;">Failed to load history details</p>';
+        }
+      }
+      
+      async function revertTo(itemId, historyId, type) {
+        if (!confirm('Are you sure you want to revert to this version? The current version will be saved to history first.')) return;
+        
+        try {
+          var endpoint = type === 'system' 
+            ? '/api/systems/' + itemId + '/revert/' + historyId
+            : '/api/tasks/' + itemId + '/revert/' + historyId;
+          
+          await fetch(endpoint, { method: 'POST' });
+          alert('Reverted successfully!');
+          location.reload();
+        } catch (e) {
+          console.error('Error reverting:', e);
+          alert('Failed to revert');
+        }
+      }
+      
+      function closeModal() {
+        document.getElementById('detailModal').classList.remove('active');
+      }
+      
+      document.getElementById('detailModal').addEventListener('click', function(e) {
+        if (e.target === this) closeModal();
+      });
+    </script>
+  </body>
+  </html>
+  `;
+}
+
 module.exports = {
   adminSetupPage,
   policyPage,
@@ -3083,4 +5543,8 @@ module.exports = {
   adminBackupsPage,
   restoringBackupPage,
   restoringUploadedBackupPage,
+  systemsListPage,
+  systemDetailPage,
+  taskDetailPage,
+  historyPage,
 };

@@ -26,6 +26,7 @@ const registerPinnedRoutes = require("./pinned");
 const { registerLogsReadRoutes, registerLogsWriteRoutes } = require("./logs");
 const registerAdminCoreRoutes = require("./adminCore");
 const registerUploaderRoutes = require("./uploader");
+const registerSystemsRoutes = require("./systems");
 
 const app = express();
 
@@ -73,6 +74,7 @@ app.use((req, res, next) => {
 	return next();
 });
 app.use(bodyParser.urlencoded({ extended: true }));
+app.use(express.json());
 
 // Settings (default password, admin setup, contact info)
 settingsConfig.loadSettings();
@@ -158,6 +160,16 @@ registerUploaderRoutes(app, {
 	escapeHtml,
 	getCurrentUser,
 	isAdmin,
+});
+
+registerSystemsRoutes(app, {
+	db,
+	isAdmin,
+	getCurrentUser,
+	escapeHtml,
+	upload,
+	views,
+	uploadDir,
 });
 
 registerLogsWriteRoutes(app, {

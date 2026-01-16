@@ -1239,6 +1239,14 @@ function registerLogsReadRoutes(app, deps) {
 									.join("")
 							: '<div class="sidebar-item"><span>No users for this filter</span></div>'
 					}
+
+					<!-- Systems Link -->
+					<div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);">
+						<a href="/systems" style="display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--accent); color: white; border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: 500;">
+							<span>📋</span>
+							<span>Systems & Tasks</span>
+						</a>
+					</div>
 				</aside>
 			</div>
 		</div>
