@@ -4931,11 +4931,11 @@ function taskDetailPage(opts) {
             <span class="status-label">Assigned To</span>
             <div class="multi-assignee-wrapper">
               ${assigneeAvatars ? `<div class="avatar-group">${assigneeAvatars}</div>` : '<span style="color: #94a3b8; font-size: 13px;">Unassigned</span>'}
-              <button type="button" class="btn btn-sm btn-secondary" onclick="toggleAssigneeDropdown()">Edit</button>
-            </div>
-            <div id="assigneeDropdown" class="assignee-dropdown" style="display: none;">
-              <div class="assignee-checkbox-list">
-                ${userCheckboxes}
+              <button type="button" class="btn btn-sm btn-secondary" onclick="toggleAssigneeDropdown(event)">Edit</button>
+              <div id="assigneeDropdown" class="assignee-dropdown" style="display: none;">
+                <div class="assignee-checkbox-list">
+                  ${userCheckboxes}
+                </div>
               </div>
             </div>
           </div>
@@ -5061,7 +5061,8 @@ function taskDetailPage(opts) {
       var systemId = ${system.id};
       var taskId = ${task.id};
       
-      function toggleAssigneeDropdown() {
+      function toggleAssigneeDropdown(event) {
+        if (event) event.stopPropagation();
         var dropdown = document.getElementById('assigneeDropdown');
         dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
       }
@@ -5069,8 +5070,9 @@ function taskDetailPage(opts) {
       // Close dropdown when clicking outside
       document.addEventListener('click', function(e) {
         var dropdown = document.getElementById('assigneeDropdown');
-        var wrapper = e.target.closest('.multi-assignee-wrapper, .assignee-dropdown');
-        if (!wrapper && dropdown && dropdown.style.display !== 'none') {
+        if (!dropdown) return;
+        var isInside = e.target.closest('.multi-assignee-wrapper');
+        if (!isInside && dropdown.style.display !== 'none') {
           dropdown.style.display = 'none';
         }
       });
