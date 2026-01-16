@@ -138,23 +138,23 @@ module.exports = function registerSystemsRoutes(app, deps) {
 			// Get all users for the dropdown
 			const users = await dbAll("SELECT username FROM users ORDER BY username");
 			
-			// Get all tasks assigned to the selected user with system info
+			// Get all tasks assigned to the selected user with system info (supports comma-separated assignees)
 			const tasks = await dbAll(
 				`SELECT t.*, s.name as system_name, s.color as system_color, s.id as system_id
 				 FROM system_tasks t
 				 LEFT JOIN systems s ON t.system_id = s.id
-				 WHERE t.assigned_to = ?
+				 WHERE t.assigned_to = ? OR t.assigned_to LIKE ? OR t.assigned_to LIKE ? OR t.assigned_to LIKE ?
 				 ORDER BY t.is_completed ASC, t.due_date ASC, t.priority DESC, t.created_at DESC`,
-				[viewUser]
+				[viewUser, `${viewUser},%`, `%,${viewUser},%`, `%,${viewUser}`]
 			);
 			
 			// Get all systems this user is associated with (created by or has tasks in)
 			const systems = await dbAll(
 				`SELECT DISTINCT s.* FROM systems s
 				 LEFT JOIN system_tasks t ON s.id = t.system_id
-				 WHERE s.created_by = ? OR t.assigned_to = ?
+				 WHERE s.created_by = ? OR t.assigned_to = ? OR t.assigned_to LIKE ? OR t.assigned_to LIKE ? OR t.assigned_to LIKE ?
 				 ORDER BY s.name ASC`,
-				[viewUser, viewUser]
+				[viewUser, viewUser, `${viewUser},%`, `%,${viewUser},%`, `%,${viewUser}`]
 			);
 			
 			res.send(views.myTasksPage({
@@ -258,7 +258,13 @@ module.exports = function registerSystemsRoutes(app, deps) {
 		}
 
 		const systemId = req.params.id;
-		const { title, description, assigned_to, priority, due_date, tags } = req.body;
+		const { title, description, priority, due_date, tags } = req.body;
+		let assigned_to = req.body.assigned_to;
+		
+		// Handle multiple assignees (array from checkboxes)
+		if (Array.isArray(assigned_to)) {
+			assigned_to = assigned_to.join(',');
+		}
 
 		if (!title || !title.trim()) {
 			return res.redirect("/systems/" + systemId);

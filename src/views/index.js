@@ -3448,6 +3448,10 @@ function systemDetailPage(opts) {
     `<option value="${u.username}">${u.username}</option>`
   ).join('');
   
+  const userCheckboxes = (users || []).map(u => 
+    `<label class="assignee-checkbox-label"><input type="checkbox" name="assigned_to" value="${u.username}" class="new-task-assignee"> ${u.username}</label>`
+  ).join('');
+  
   const tags = system.tags ? system.tags.split(',').map(t => 
     `<span class="tag">${escapeHtml(t.trim())}</span>`
   ).join('') : '';
@@ -3473,6 +3477,11 @@ function systemDetailPage(opts) {
       `<span class="tag" style="font-size: 10px;">${escapeHtml(t.trim())}</span>`
     ).join('') : '';
     
+    const assignees = task.assigned_to ? task.assigned_to.split(',').map(a => a.trim()).filter(a => a) : [];
+    const assigneeAvatars = assignees.map(a => 
+      `<span class="avatar" title="Assigned to ${escapeHtml(a)}">${a.charAt(0).toUpperCase()}</span>`
+    ).join('');
+    
     return `
       <div class="task-item ${task.is_completed ? 'completed' : ''}" data-task-id="${task.id}" draggable="true">
         <div class="drag-handle" title="Drag to reorder">⋮⋮</div>
@@ -3483,7 +3492,7 @@ function systemDetailPage(opts) {
           <a href="/systems/${system.id}/tasks/${task.id}" class="task-title">${escapeHtml(task.title)}</a>
           <div class="task-meta">
             <span class="badge ${priorityClass}">${task.priority || 'medium'}</span>
-            ${task.assigned_to ? `<span class="avatar" title="Assigned to ${escapeHtml(task.assigned_to)}">${task.assigned_to.charAt(0).toUpperCase()}</span>` : ''}
+            ${assigneeAvatars ? `<div class="avatar-group">${assigneeAvatars}</div>` : ''}
             ${task.due_date ? `<span class="${isOverdue ? 'text-danger' : ''}" style="font-size: 12px; ${isOverdue ? 'color: #dc2626;' : ''}">Due: ${task.due_date}</span>` : ''}
             ${taskTags}
           </div>
@@ -3788,6 +3797,43 @@ function systemDetailPage(opts) {
       .task-completed-by { font-size: 11px; color: #94a3b8; margin-top: 4px; }
       .task-actions { display: flex; gap: 4px; }
       
+      .avatar-group { display: flex; align-items: center; }
+      .avatar-group .avatar { margin-left: -6px; border: 2px solid white; }
+      .avatar-group .avatar:first-child { margin-left: 0; }
+      .avatar {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        width: 26px;
+        height: 26px;
+        border-radius: 50%;
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        font-size: 11px;
+        font-weight: 600;
+      }
+      
+      .multi-assignee-wrapper {
+        max-height: 120px;
+        overflow-y: auto;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 8px;
+        background: #f8fafc;
+      }
+      .assignee-checkbox-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 8px;
+        border-radius: 4px;
+        cursor: pointer;
+        font-size: 14px;
+        transition: background 0.15s;
+      }
+      .assignee-checkbox-label:hover { background: #e2e8f0; }
+      .assignee-checkbox-label input { cursor: pointer; }
+      
       .add-task-form {
         display: flex;
         gap: 12px;
@@ -3995,10 +4041,9 @@ function systemDetailPage(opts) {
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
               <div class="form-group">
                 <label class="form-label">Assigned To</label>
-                <select name="assigned_to" class="form-select">
-                  <option value="">Unassigned</option>
-                  ${userOptions}
-                </select>
+                <div class="multi-assignee-wrapper">
+                  ${userCheckboxes}
+                </div>
               </div>
               <div class="form-group">
                 <label class="form-label">Priority</label>
@@ -4477,8 +4522,15 @@ function systemDetailPage(opts) {
 function taskDetailPage(opts) {
   const { system, task, checklist, attachments, users, currentUser, admin, escapeHtml } = opts;
   
+  // Parse comma-separated assignees
+  const assignedUsers = task.assigned_to ? task.assigned_to.split(',').map(a => a.trim()).filter(a => a) : [];
+  
   const userOptions = (users || []).map(u => 
-    `<option value="${u.username}" ${task.assigned_to === u.username ? 'selected' : ''}>${u.username}</option>`
+    `<option value="${u.username}" ${assignedUsers.includes(u.username) ? 'selected' : ''}>${u.username}</option>`
+  ).join('');
+  
+  const userCheckboxes = (users || []).map(u => 
+    `<label class="assignee-checkbox-label"><input type="checkbox" value="${u.username}" class="assignee-checkbox" ${assignedUsers.includes(u.username) ? 'checked' : ''} onchange="updateTask()"> ${u.username}</label>`
   ).join('');
   
   const priorityOptions = ['low', 'medium', 'high', 'urgent'].map(p => 
@@ -4488,6 +4540,10 @@ function taskDetailPage(opts) {
   const tags = task.tags ? task.tags.split(',').map(t => 
     `<span class="tag">${escapeHtml(t.trim())}</span>`
   ).join('') : '';
+  
+  const assigneeAvatars = assignedUsers.map(a => 
+    `<span class="avatar" title="${escapeHtml(a)}">${a.charAt(0).toUpperCase()}</span>`
+  ).join('');
   
   const checklistItems = (checklist || []).map(item => `
     <div class="checklist-item" data-item-id="${item.id}">
@@ -4558,8 +4614,43 @@ function taskDetailPage(opts) {
         margin-bottom: 16px;
         flex-wrap: wrap;
       }
-      .status-item { display: flex; align-items: center; gap: 8px; }
+      .status-item { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
       .status-label { font-size: 12px; color: #64748b; font-weight: 600; text-transform: uppercase; }
+      
+      .avatar-group { display: flex; gap: -4px; }
+      .avatar-group .avatar { margin-left: -6px; border: 2px solid white; }
+      .avatar-group .avatar:first-child { margin-left: 0; }
+      
+      .multi-assignee-wrapper { display: flex; align-items: center; gap: 8px; position: relative; }
+      .assignee-dropdown {
+        position: absolute;
+        top: 100%;
+        left: 0;
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        padding: 8px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.1);
+        z-index: 100;
+        min-width: 200px;
+        max-height: 200px;
+        overflow-y: auto;
+      }
+      .assignee-checkbox-list { display: flex; flex-direction: column; gap: 2px; }
+      .assignee-checkbox-label {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 10px;
+        border-radius: 6px;
+        cursor: pointer;
+        font-size: 14px;
+        transition: background 0.15s;
+      }
+      .assignee-checkbox-label:hover { background: #f1f5f9; }
+      .assignee-checkbox-label input { cursor: pointer; width: 16px; height: 16px; }
+      
+      .multi-select { min-height: 80px; }
       
       .task-description textarea {
         width: 100%;
@@ -4838,10 +4929,15 @@ function taskDetailPage(opts) {
           </div>
           <div class="status-item">
             <span class="status-label">Assigned To</span>
-            <select id="taskAssignedTo" class="form-select" style="width: auto;" onchange="updateTask()">
-              <option value="">Unassigned</option>
-              ${userOptions}
-            </select>
+            <div class="multi-assignee-wrapper">
+              ${assigneeAvatars ? `<div class="avatar-group">${assigneeAvatars}</div>` : '<span style="color: #94a3b8; font-size: 13px;">Unassigned</span>'}
+              <button type="button" class="btn btn-sm btn-secondary" onclick="toggleAssigneeDropdown()">Edit</button>
+            </div>
+            <div id="assigneeDropdown" class="assignee-dropdown" style="display: none;">
+              <div class="assignee-checkbox-list">
+                ${userCheckboxes}
+              </div>
+            </div>
           </div>
           <div class="status-item">
             <span class="status-label">Due Date</span>
@@ -4964,6 +5060,20 @@ function taskDetailPage(opts) {
     <script>
       var systemId = ${system.id};
       var taskId = ${task.id};
+      
+      function toggleAssigneeDropdown() {
+        var dropdown = document.getElementById('assigneeDropdown');
+        dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+      }
+      
+      // Close dropdown when clicking outside
+      document.addEventListener('click', function(e) {
+        var dropdown = document.getElementById('assigneeDropdown');
+        var wrapper = e.target.closest('.multi-assignee-wrapper, .assignee-dropdown');
+        if (!wrapper && dropdown && dropdown.style.display !== 'none') {
+          dropdown.style.display = 'none';
+        }
+      });
       
       // Rich Text Editor Functions
       function execCmd(command, value) {
@@ -5189,12 +5299,16 @@ function taskDetailPage(opts) {
       initResizeHandles();
       
       async function updateTask() {
+        var assignees = [];
+        document.querySelectorAll('.assignee-checkbox:checked').forEach(function(cb) {
+          assignees.push(cb.value);
+        });
         var data = {
           title: document.getElementById('taskTitle').value,
           description: document.getElementById('taskDescription').value,
           content: document.getElementById('taskContent').innerHTML,
           priority: document.getElementById('taskPriority').value,
-          assigned_to: document.getElementById('taskAssignedTo').value,
+          assigned_to: assignees.join(','),
           due_date: document.getElementById('taskDueDate').value
         };
         try {
