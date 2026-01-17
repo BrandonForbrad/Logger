@@ -4167,7 +4167,7 @@ function systemDetailPage(opts) {
                 <button type="button" class="toolbar-btn" onclick="execCmd('redo')" title="Redo (Ctrl+Y)">↪</button>
               </div>
             </div>
-            <div class="rich-editor" contenteditable="true" id="systemContent" onblur="updateSystem()" oninput="autoSave()">${system.content || ''}</div>
+            <div class="rich-editor" contenteditable="true" id="systemContent" onblur="updateSystem()" oninput="autoSave()">${system.content || '<p><br></p>'}</div>
           </div>
         </div>
       </div>
@@ -4398,6 +4398,9 @@ function systemDetailPage(opts) {
       // Insert content checklist
       function insertContentChecklist() {
         var id = 'cl-' + Date.now();
+        var content = document.getElementById('systemContent');
+        
+        // Build the checklist HTML with proper paragraph after
         var html = '<div class="content-checklist" data-checklist-id="' + id + '" contenteditable="false">' +
           '<div class="content-checklist-header" onclick="toggleContentChecklist(this.parentElement)">' +
             '<span class="content-checklist-toggle">▶</span>' +
@@ -4406,12 +4409,22 @@ function systemDetailPage(opts) {
             '<button class="content-checklist-delete" onclick="event.stopPropagation(); deleteContentChecklist(this)" title="Delete">&times;</button>' +
           '</div>' +
           '<div class="content-checklist-body" contenteditable="true" onblur="triggerContentUpdate()"></div>' +
-        '</div><p></p>';
+        '</div><p><br></p>';
+        
         document.execCommand('insertHTML', false, html);
-        // Focus the title
+        
+        // Ensure there's a paragraph before the checklist if it's at the start
         setTimeout(function() {
           var checklist = document.querySelector('[data-checklist-id="' + id + '"]');
           if (checklist) {
+            // If checklist is the first child, add a paragraph before it
+            if (checklist === content.firstElementChild) {
+              var p = document.createElement('p');
+              p.innerHTML = '<br>';
+              content.insertBefore(p, checklist);
+            }
+            
+            // Focus the title
             var title = checklist.querySelector('.content-checklist-title');
             if (title) title.focus();
           }
@@ -4467,17 +4480,53 @@ function systemDetailPage(opts) {
         }, 1000);
       }
       
-      // Keyboard shortcuts
-      document.getElementById('systemContent').addEventListener('keydown', function(e) {
-        if (e.ctrlKey || e.metaKey) {
-          switch (e.key.toLowerCase()) {
-            case 's':
-              e.preventDefault();
-              updateSystem();
-              break;
-          }
+      // Ensure content editor has proper structure
+      (function initContentEditor() {
+        var content = document.getElementById('systemContent');
+        if (!content) return;
+        
+        // If empty or just whitespace, add initial paragraph
+        if (!content.innerHTML.trim() || content.innerHTML.trim() === '<br>') {
+          content.innerHTML = '<p><br></p>';
         }
-      });
+        
+        // Fix first line deletion issue - ensure there's always at least one paragraph
+        content.addEventListener('keydown', function(e) {
+          // Ctrl+S to save
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+            e.preventDefault();
+            updateSystem();
+            return;
+          }
+          
+          // Handle backspace/delete at start of content
+          if (e.key === 'Backspace' || e.key === 'Delete') {
+            setTimeout(function() {
+              // After deletion, ensure we still have content structure
+              if (!content.innerHTML.trim() || content.innerHTML.trim() === '<br>') {
+                content.innerHTML = '<p><br></p>';
+                // Place cursor in the paragraph
+                var p = content.querySelector('p');
+                if (p) {
+                  var range = document.createRange();
+                  var sel = window.getSelection();
+                  range.setStart(p, 0);
+                  range.collapse(true);
+                  sel.removeAllRanges();
+                  sel.addRange(range);
+                }
+              }
+            }, 0);
+          }
+        });
+        
+        // Also handle when content becomes empty via other means
+        content.addEventListener('input', function() {
+          if (!content.innerHTML.trim() || content.innerHTML.trim() === '<br>') {
+            content.innerHTML = '<p><br></p>';
+          }
+        });
+      })();
       
       // Paste image/video/file handler
       document.getElementById('systemContent').addEventListener('paste', function(e) {
@@ -5875,7 +5924,7 @@ function taskDetailPage(opts) {
                 <input type="file" id="inlineFileInput" style="display:none" onchange="handleFileUpload(this)" accept="*/*">
               </div>
             </div>
-            <div class="rich-editor" contenteditable="true" id="taskContent" onblur="updateTask()" oninput="autoSave()">${task.content || ''}</div>
+            <div class="rich-editor" contenteditable="true" id="taskContent" onblur="updateTask()" oninput="autoSave()">${task.content || '<p><br></p>'}</div>
           </div>
         </div>
       </div>
@@ -6003,6 +6052,9 @@ function taskDetailPage(opts) {
       // Insert content checklist
       function insertContentChecklist() {
         var id = 'cl-' + Date.now();
+        var content = document.getElementById('taskContent');
+        
+        // Build the checklist HTML with proper paragraph after
         var html = '<div class="content-checklist" data-checklist-id="' + id + '" contenteditable="false">' +
           '<div class="content-checklist-header" onclick="toggleContentChecklist(this.parentElement)">' +
             '<span class="content-checklist-toggle">▶</span>' +
@@ -6011,12 +6063,22 @@ function taskDetailPage(opts) {
             '<button class="content-checklist-delete" onclick="event.stopPropagation(); deleteContentChecklist(this)" title="Delete">&times;</button>' +
           '</div>' +
           '<div class="content-checklist-body" contenteditable="true" onblur="triggerContentUpdate()"></div>' +
-        '</div><p></p>';
+        '</div><p><br></p>';
+        
         document.execCommand('insertHTML', false, html);
-        // Focus the title
+        
+        // Ensure there's a paragraph before the checklist if it's at the start
         setTimeout(function() {
           var checklist = document.querySelector('[data-checklist-id="' + id + '"]');
           if (checklist) {
+            // If checklist is the first child, add a paragraph before it
+            if (checklist === content.firstElementChild) {
+              var p = document.createElement('p');
+              p.innerHTML = '<br>';
+              content.insertBefore(p, checklist);
+            }
+            
+            // Focus the title
             var title = checklist.querySelector('.content-checklist-title');
             if (title) title.focus();
           }
@@ -6062,6 +6124,54 @@ function taskDetailPage(opts) {
           }
         }, 500);
       }
+      
+      // Ensure content editor has proper structure
+      (function initContentEditor() {
+        var content = document.getElementById('taskContent');
+        if (!content) return;
+        
+        // If empty or just whitespace, add initial paragraph
+        if (!content.innerHTML.trim() || content.innerHTML.trim() === '<br>') {
+          content.innerHTML = '<p><br></p>';
+        }
+        
+        // Fix first line deletion issue - ensure there's always at least one paragraph
+        content.addEventListener('keydown', function(e) {
+          // Ctrl+S to save
+          if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
+            e.preventDefault();
+            updateTask();
+            return;
+          }
+          
+          // Handle backspace/delete at start of content
+          if (e.key === 'Backspace' || e.key === 'Delete') {
+            setTimeout(function() {
+              // After deletion, ensure we still have content structure
+              if (!content.innerHTML.trim() || content.innerHTML.trim() === '<br>') {
+                content.innerHTML = '<p><br></p>';
+                // Place cursor in the paragraph
+                var p = content.querySelector('p');
+                if (p) {
+                  var range = document.createRange();
+                  var sel = window.getSelection();
+                  range.setStart(p, 0);
+                  range.collapse(true);
+                  sel.removeAllRanges();
+                  sel.addRange(range);
+                }
+              }
+            }, 0);
+          }
+        });
+        
+        // Also handle when content becomes empty via other means
+        content.addEventListener('input', function() {
+          if (!content.innerHTML.trim() || content.innerHTML.trim() === '<br>') {
+            content.innerHTML = '<p><br></p>';
+          }
+        });
+      })();
       
       // Paste image/video/file handler
       document.getElementById('taskContent').addEventListener('paste', function(e) {
