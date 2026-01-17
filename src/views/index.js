@@ -3973,6 +3973,97 @@ function systemDetailPage(opts) {
       .rich-editor {
         position: relative;
       }
+      
+      /* Content Checklist Styles */
+      .content-checklist {
+        margin: 12px 0;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        background: #f8fafc;
+        overflow: hidden;
+      }
+      .content-checklist-header {
+        display: flex;
+        align-items: center;
+        padding: 10px 12px;
+        background: #fff;
+        cursor: pointer;
+        gap: 10px;
+        border-bottom: 1px solid transparent;
+        transition: background 0.15s;
+      }
+      .content-checklist-header:hover {
+        background: #f1f5f9;
+      }
+      .content-checklist.expanded .content-checklist-header {
+        border-bottom-color: #e2e8f0;
+      }
+      .content-checklist-toggle {
+        font-size: 12px;
+        color: #64748b;
+        transition: transform 0.2s;
+        user-select: none;
+      }
+      .content-checklist.expanded .content-checklist-toggle {
+        transform: rotate(90deg);
+      }
+      .content-checklist-checkbox {
+        width: 18px;
+        height: 18px;
+        cursor: pointer;
+        accent-color: #22c55e;
+      }
+      .content-checklist-title {
+        flex: 1;
+        font-weight: 500;
+        color: #1e293b;
+        outline: none;
+        min-width: 50px;
+      }
+      .content-checklist-title:empty::before {
+        content: 'Checklist item...';
+        color: #94a3b8;
+      }
+      .content-checklist.checked .content-checklist-title {
+        text-decoration: line-through;
+        color: #64748b;
+      }
+      .content-checklist-delete {
+        background: none;
+        border: none;
+        color: #94a3b8;
+        cursor: pointer;
+        padding: 4px;
+        font-size: 14px;
+        opacity: 0;
+        transition: opacity 0.15s, color 0.15s;
+      }
+      .content-checklist-header:hover .content-checklist-delete {
+        opacity: 1;
+      }
+      .content-checklist-delete:hover {
+        color: #ef4444;
+      }
+      .content-checklist-body {
+        display: none;
+        padding: 12px;
+        background: #fff;
+        min-height: 60px;
+      }
+      .content-checklist.expanded .content-checklist-body {
+        display: block;
+      }
+      .content-checklist-body:empty::before {
+        content: 'Add details, images, or videos here...';
+        color: #94a3b8;
+        font-style: italic;
+      }
+      .content-checklist-body img,
+      .content-checklist-body video {
+        max-width: 100%;
+        border-radius: 6px;
+        margin: 8px 0;
+      }
     </style>
     <script src="/socket.io/socket.io.js"></script>
   </head>
@@ -4065,6 +4156,7 @@ function systemDetailPage(opts) {
                 <button type="button" class="toolbar-btn" onclick="triggerFileUpload('video')" title="Upload Video">🎬</button>
                 <button type="button" class="toolbar-btn" onclick="triggerFileUpload('file')" title="Upload File">📎</button>
                 <button type="button" class="toolbar-btn" onclick="insertTable()" title="Insert Table">📊</button>
+                <button type="button" class="toolbar-btn" onclick="insertContentChecklist()" title="Insert Checklist">☑️</button>
                 <button type="button" class="toolbar-btn" onclick="execCmd('insertHorizontalRule')" title="Horizontal Line">—</button>
                 <input type="file" id="inlineFileInput" style="display:none" onchange="handleFileUpload(this)" accept="*/*">
               </div>
@@ -4301,6 +4393,69 @@ function systemDetailPage(opts) {
         }
         tableHtml += '</tbody></table>';
         document.execCommand('insertHTML', false, tableHtml);
+      }
+      
+      // Insert content checklist
+      function insertContentChecklist() {
+        var id = 'cl-' + Date.now();
+        var html = '<div class="content-checklist" data-checklist-id="' + id + '" contenteditable="false">' +
+          '<div class="content-checklist-header" onclick="toggleContentChecklist(this.parentElement)">' +
+            '<span class="content-checklist-toggle">▶</span>' +
+            '<input type="checkbox" class="content-checklist-checkbox" onclick="event.stopPropagation(); toggleChecklistChecked(this)">' +
+            '<span class="content-checklist-title" contenteditable="true" onclick="event.stopPropagation()" onblur="triggerContentUpdate()"></span>' +
+            '<button class="content-checklist-delete" onclick="event.stopPropagation(); deleteContentChecklist(this)" title="Delete">&times;</button>' +
+          '</div>' +
+          '<div class="content-checklist-body" contenteditable="true" onblur="triggerContentUpdate()"></div>' +
+        '</div><p></p>';
+        document.execCommand('insertHTML', false, html);
+        // Focus the title
+        setTimeout(function() {
+          var checklist = document.querySelector('[data-checklist-id="' + id + '"]');
+          if (checklist) {
+            var title = checklist.querySelector('.content-checklist-title');
+            if (title) title.focus();
+          }
+        }, 10);
+      }
+      
+      function toggleContentChecklist(el) {
+        el.classList.toggle('expanded');
+        triggerContentUpdate();
+      }
+      
+      function toggleChecklistChecked(checkbox) {
+        var checklist = checkbox.closest('.content-checklist');
+        if (checklist) {
+          checklist.classList.toggle('checked', checkbox.checked);
+          // Set the checked attribute so it persists in innerHTML
+          if (checkbox.checked) {
+            checkbox.setAttribute('checked', 'checked');
+          } else {
+            checkbox.removeAttribute('checked');
+          }
+          triggerContentUpdate();
+        }
+      }
+      
+      function deleteContentChecklist(btn) {
+        var checklist = btn.closest('.content-checklist');
+        if (checklist && confirm('Delete this checklist item?')) {
+          checklist.remove();
+          triggerContentUpdate();
+        }
+      }
+      
+      function triggerContentUpdate() {
+        // Debounced content update
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = setTimeout(function() {
+          updateSystem();
+          // Also emit socket event
+          var content = document.getElementById('systemContent');
+          if (content && typeof socket !== 'undefined') {
+            socket.emit('content-update', { room: room, field: 'systemContent', value: content.innerHTML, username: currentUsername });
+          }
+        }, 500);
       }
       
       // Auto-save with debounce
@@ -5491,6 +5646,97 @@ function taskDetailPage(opts) {
         position: relative;
       }
       
+      /* Content Checklist Styles */
+      .content-checklist {
+        margin: 12px 0;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        background: #f8fafc;
+        overflow: hidden;
+      }
+      .content-checklist-header {
+        display: flex;
+        align-items: center;
+        padding: 10px 12px;
+        background: #fff;
+        cursor: pointer;
+        gap: 10px;
+        border-bottom: 1px solid transparent;
+        transition: background 0.15s;
+      }
+      .content-checklist-header:hover {
+        background: #f1f5f9;
+      }
+      .content-checklist.expanded .content-checklist-header {
+        border-bottom-color: #e2e8f0;
+      }
+      .content-checklist-toggle {
+        font-size: 12px;
+        color: #64748b;
+        transition: transform 0.2s;
+        user-select: none;
+      }
+      .content-checklist.expanded .content-checklist-toggle {
+        transform: rotate(90deg);
+      }
+      .content-checklist-checkbox {
+        width: 18px;
+        height: 18px;
+        cursor: pointer;
+        accent-color: #22c55e;
+      }
+      .content-checklist-title {
+        flex: 1;
+        font-weight: 500;
+        color: #1e293b;
+        outline: none;
+        min-width: 50px;
+      }
+      .content-checklist-title:empty::before {
+        content: 'Checklist item...';
+        color: #94a3b8;
+      }
+      .content-checklist.checked .content-checklist-title {
+        text-decoration: line-through;
+        color: #64748b;
+      }
+      .content-checklist-delete {
+        background: none;
+        border: none;
+        color: #94a3b8;
+        cursor: pointer;
+        padding: 4px;
+        font-size: 14px;
+        opacity: 0;
+        transition: opacity 0.15s, color 0.15s;
+      }
+      .content-checklist-header:hover .content-checklist-delete {
+        opacity: 1;
+      }
+      .content-checklist-delete:hover {
+        color: #ef4444;
+      }
+      .content-checklist-body {
+        display: none;
+        padding: 12px;
+        background: #fff;
+        min-height: 60px;
+      }
+      .content-checklist.expanded .content-checklist-body {
+        display: block;
+      }
+      .content-checklist-body:empty::before {
+        content: 'Add details, images, or videos here...';
+        color: #94a3b8;
+        font-style: italic;
+      }
+      .content-checklist-body img,
+      .content-checklist-body video {
+        max-width: 100%;
+        border-radius: 6px;
+        margin: 8px 0;
+      }
+      
       ${task.is_completed ? `
         .task-header { border-left: 5px solid #22c55e; }
       ` : ''}
@@ -5624,6 +5870,7 @@ function taskDetailPage(opts) {
                 <button type="button" class="toolbar-btn" onclick="triggerFileUpload('image')" title="Upload Image">🖼️</button>
                 <button type="button" class="toolbar-btn" onclick="triggerFileUpload('video')" title="Upload Video">🎬</button>
                 <button type="button" class="toolbar-btn" onclick="triggerFileUpload('file')" title="Upload File">📎</button>
+                <button type="button" class="toolbar-btn" onclick="insertContentChecklist()" title="Insert Checklist">☑️</button>
                 <button type="button" class="toolbar-btn" onclick="execCmd('removeFormat')" title="Clear Formatting">✖</button>
                 <input type="file" id="inlineFileInput" style="display:none" onchange="handleFileUpload(this)" accept="*/*">
               </div>
@@ -5751,6 +5998,69 @@ function taskDetailPage(opts) {
         autoSaveTimer = setTimeout(function() {
           updateTask();
         }, 1000);
+      }
+      
+      // Insert content checklist
+      function insertContentChecklist() {
+        var id = 'cl-' + Date.now();
+        var html = '<div class="content-checklist" data-checklist-id="' + id + '" contenteditable="false">' +
+          '<div class="content-checklist-header" onclick="toggleContentChecklist(this.parentElement)">' +
+            '<span class="content-checklist-toggle">▶</span>' +
+            '<input type="checkbox" class="content-checklist-checkbox" onclick="event.stopPropagation(); toggleChecklistChecked(this)">' +
+            '<span class="content-checklist-title" contenteditable="true" onclick="event.stopPropagation()" onblur="triggerContentUpdate()"></span>' +
+            '<button class="content-checklist-delete" onclick="event.stopPropagation(); deleteContentChecklist(this)" title="Delete">&times;</button>' +
+          '</div>' +
+          '<div class="content-checklist-body" contenteditable="true" onblur="triggerContentUpdate()"></div>' +
+        '</div><p></p>';
+        document.execCommand('insertHTML', false, html);
+        // Focus the title
+        setTimeout(function() {
+          var checklist = document.querySelector('[data-checklist-id="' + id + '"]');
+          if (checklist) {
+            var title = checklist.querySelector('.content-checklist-title');
+            if (title) title.focus();
+          }
+        }, 10);
+      }
+      
+      function toggleContentChecklist(el) {
+        el.classList.toggle('expanded');
+        triggerContentUpdate();
+      }
+      
+      function toggleChecklistChecked(checkbox) {
+        var checklist = checkbox.closest('.content-checklist');
+        if (checklist) {
+          checklist.classList.toggle('checked', checkbox.checked);
+          // Set the checked attribute so it persists in innerHTML
+          if (checkbox.checked) {
+            checkbox.setAttribute('checked', 'checked');
+          } else {
+            checkbox.removeAttribute('checked');
+          }
+          triggerContentUpdate();
+        }
+      }
+      
+      function deleteContentChecklist(btn) {
+        var checklist = btn.closest('.content-checklist');
+        if (checklist && confirm('Delete this checklist item?')) {
+          checklist.remove();
+          triggerContentUpdate();
+        }
+      }
+      
+      function triggerContentUpdate() {
+        // Debounced content update
+        clearTimeout(autoSaveTimer);
+        autoSaveTimer = setTimeout(function() {
+          updateTask();
+          // Also emit socket event
+          var content = document.getElementById('taskContent');
+          if (content && typeof socket !== 'undefined') {
+            socket.emit('content-update', { room: room, field: 'taskContent', value: content.innerHTML, username: currentUsername });
+          }
+        }, 500);
       }
       
       // Paste image/video/file handler
