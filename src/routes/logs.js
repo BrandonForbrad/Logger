@@ -494,24 +494,31 @@ function registerLogsReadRoutes(app, deps) {
 								.join("");
 
 							const filterFormHtml = `
-							<form method="GET" action="/" class="filter-bar">
+							<form method="GET" action="/" class="filter-bar" id="filterForm">
 								<input type="hidden" name="page" value="1" />
 								<label for="userFilter" class="filter-label">Filter:</label>
 
-								<!-- User filter -->
-								<select id="userFilter" name="user" class="filter-select" onchange="this.form.submit()">
-									<option value="">All users</option>
-									${allUsernames
-										.map((u) => {
-											const safe = escapeHtml(u);
-											const selected = u === userFilter ? " selected" : "";
-											const total = perUserTotalsForDropdown[u] || 0;
-											return `<option value="${safe}"${selected}>${safe} (${total.toFixed(
-												2
-											)}h)</option>`;
-										})
-										.join("")}
-								</select>
+								<!-- User filter (searchable) -->
+								<input type="hidden" name="user" id="userFilterHidden" value="${escapeHtml(userFilter)}" />
+								<div class="searchable-user-filter" id="userFilterWrap">
+									<div class="suf-trigger" onclick="toggleUserFilter()">
+										<span class="suf-value">${userFilter ? escapeHtml(userFilter) : 'All users'}</span>
+										<span class="suf-arrow">▼</span>
+									</div>
+									<div class="suf-dropdown" id="userFilterDropdown">
+										<input type="text" class="suf-search" placeholder="Search users..." oninput="filterUserOptions(this)">
+										<div class="suf-options">
+											<div class="suf-option ${!userFilter ? 'active' : ''}" data-value="" onclick="selectUserFilter('')">All users</div>
+											${allUsernames
+												.map((u) => {
+													const safe = escapeHtml(u);
+													const total = perUserTotalsForDropdown[u] || 0;
+													return '<div class="suf-option ' + (u === userFilter ? 'active' : '') + '" data-value="' + safe + '" onclick="selectUserFilter(\'' + safe + '\')">' + safe + ' (' + total.toFixed(2) + 'h)</div>';
+												})
+												.join("")}
+										</div>
+									</div>
+								</div>
 
 								<!-- Period filter -->
 								<select name="period" class="filter-select" onchange="this.form.submit()">
@@ -993,6 +1000,37 @@ function registerLogsReadRoutes(app, deps) {
 			font-size: 11px;
 			color: var(--text-muted);
 		}
+		
+		/* Searchable user filter */
+		.searchable-user-filter { position: relative; display: inline-block; }
+		.suf-trigger {
+			display: inline-flex; align-items: center; gap: 6px;
+			border-radius: 999px; border: 1px solid var(--border);
+			padding: 5px 10px; font-size: 13px; background: white;
+			cursor: pointer; user-select: none; min-width: 100px;
+		}
+		.suf-trigger:hover { border-color: #94a3b8; }
+		.suf-value { flex: 1; }
+		.suf-arrow { font-size: 9px; color: #94a3b8; }
+		.suf-dropdown {
+			display: none; position: absolute; top: calc(100% + 4px); left: 0;
+			min-width: 200px; background: white; border: 1px solid var(--border);
+			border-radius: 10px; box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+			z-index: 50; max-height: 260px; overflow: hidden;
+			flex-direction: column;
+		}
+		.suf-dropdown.open { display: flex; }
+		.suf-search {
+			padding: 8px 10px; border: none; border-bottom: 1px solid var(--border);
+			font-size: 13px; font-family: inherit; outline: none;
+		}
+		.suf-options { overflow-y: auto; max-height: 200px; }
+		.suf-option {
+			padding: 7px 12px; font-size: 13px; cursor: pointer; transition: background 0.1s;
+		}
+		.suf-option:hover { background: #f1f5f9; }
+		.suf-option.active { background: #eff6ff; color: #2563eb; font-weight: 500; }
+		.suf-option.hidden { display: none; }
 
 		.day-section {
 			margin-bottom: 18px;
@@ -1648,6 +1686,35 @@ function registerLogsReadRoutes(app, deps) {
 			render();
 			ensureTimer();
 		})();
+	</script>
+	<script>
+		function toggleUserFilter() {
+			const dd = document.getElementById('userFilterDropdown');
+			const isOpen = dd.classList.contains('open');
+			dd.classList.toggle('open', !isOpen);
+			if (!isOpen) {
+				const input = dd.querySelector('.suf-search');
+				input.value = '';
+				input.focus();
+				dd.querySelectorAll('.suf-option').forEach(o => o.classList.remove('hidden'));
+			}
+		}
+		function filterUserOptions(input) {
+			const q = input.value.toLowerCase();
+			input.closest('.suf-dropdown').querySelectorAll('.suf-option').forEach(opt => {
+				opt.classList.toggle('hidden', q && !opt.textContent.toLowerCase().includes(q));
+			});
+		}
+		function selectUserFilter(val) {
+			document.getElementById('userFilterHidden').value = val;
+			document.getElementById('filterForm').submit();
+		}
+		document.addEventListener('click', function(e) {
+			if (!e.target.closest('.searchable-user-filter')) {
+				const dd = document.getElementById('userFilterDropdown');
+				if (dd) dd.classList.remove('open');
+			}
+		});
 	</script>
 </body>
 </html>

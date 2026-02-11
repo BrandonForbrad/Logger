@@ -3273,6 +3273,35 @@ function systemsListPage(opts) {
       .system-card-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
       .system-card-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
       
+      /* Searchable filter dropdown */
+      .searchable-filter-wrap { position: relative; min-width: 130px; }
+      .searchable-filter-trigger {
+        display: flex; align-items: center; gap: 6px;
+        padding: 7px 10px; border: 1px solid #e2e8f0; border-radius: 8px;
+        font-size: 14px; background: white; cursor: pointer; user-select: none;
+      }
+      .searchable-filter-trigger:hover { border-color: #cbd5e1; }
+      .sf-value { flex: 1; }
+      .sf-arrow { font-size: 10px; color: #94a3b8; }
+      .searchable-filter-dropdown {
+        display: none; position: absolute; top: calc(100% + 4px); left: 0; right: 0;
+        background: white; border: 1px solid #e2e8f0; border-radius: 8px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.12); z-index: 50; max-height: 240px;
+        overflow: hidden; flex-direction: column;
+      }
+      .searchable-filter-dropdown.open { display: flex; }
+      .searchable-filter-search {
+        padding: 8px 10px; border: none; border-bottom: 1px solid #e2e8f0;
+        font-size: 13px; font-family: inherit; outline: none;
+      }
+      .searchable-filter-options { overflow-y: auto; max-height: 190px; }
+      .searchable-filter-option {
+        padding: 7px 12px; font-size: 13px; cursor: pointer; transition: background 0.1s;
+      }
+      .searchable-filter-option:hover { background: #f1f5f9; }
+      .searchable-filter-option.active { background: #eff6ff; color: #2563eb; font-weight: 500; }
+      .searchable-filter-option.hidden { display: none; }
+      
       .new-system-modal {
         display: none;
         position: fixed;
@@ -3321,7 +3350,7 @@ function systemsListPage(opts) {
       <a href="/" class="navbar-brand">Daily Logger</a>
       <div class="navbar-links">
         <a href="/">Home</a>
-        <a href="/my-tasks">My Tasks</a>
+        <a href="/my-tasks">Tasks</a>
         <a href="/systems" style="color: #0f172a;">Systems</a>
         <a href="/systems/history">History</a>
         ${admin ? '<a href="/admin">Admin</a>' : ''}
@@ -3336,10 +3365,21 @@ function systemsListPage(opts) {
         <div class="filters" style="margin-left: auto;">
           <div class="filter-group">
             <label class="filter-label">Assigned:</label>
-            <select class="form-select" style="width: auto;" onchange="applyFilters()">
-              <option value="">All</option>
-              ${userOptions}
-            </select>
+            <div class="searchable-filter-wrap" id="assignedFilterWrap">
+              <div class="searchable-filter-trigger" onclick="toggleFilterSelect('assignedFilterWrap')">
+                <span class="sf-value">${filterAssigned ? filterAssigned : 'All'}</span>
+                <span class="sf-arrow">▼</span>
+              </div>
+              <div class="searchable-filter-dropdown">
+                <input type="text" class="searchable-filter-search" placeholder="Search users..." oninput="filterSelectOptions(this)">
+                <div class="searchable-filter-options">
+                  <div class="searchable-filter-option ${!filterAssigned ? 'active' : ''}" onclick="applyAssignedFilter('')">All</div>
+                  ${(users || []).map(u => 
+                    '<div class="searchable-filter-option ' + (filterAssigned === u.username ? 'active' : '') + '" onclick="applyAssignedFilter(\'' + u.username + '\')">' + u.username + '</div>'
+                  ).join('')}
+                </div>
+              </div>
+            </div>
           </div>
           <div class="filter-group">
             <label class="filter-label">Tag:</label>
@@ -3431,8 +3471,49 @@ function systemsListPage(opts) {
       });
       
       function applyFilters() {
-        // Filter implementation would go here
+        const tagSelect = document.querySelector('.filter-group:last-child .form-select');
+        const tag = tagSelect ? tagSelect.value : '';
+        const assigned = document.querySelector('#assignedFilterWrap .searchable-filter-option.active');
+        const assignedVal = assigned ? (assigned.textContent.trim() === 'All' ? '' : assigned.textContent.trim()) : '';
+        const params = new URLSearchParams();
+        if (assignedVal) params.set('assigned', assignedVal);
+        if (tag) params.set('tag', tag);
+        window.location.href = '/systems' + (params.toString() ? '?' + params.toString() : '');
       }
+      
+      function applyAssignedFilter(val) {
+        const params = new URLSearchParams(window.location.search);
+        if (val) { params.set('assigned', val); } else { params.delete('assigned'); }
+        window.location.href = '/systems' + (params.toString() ? '?' + params.toString() : '');
+      }
+      
+      function toggleFilterSelect(wrapId) {
+        const wrap = document.getElementById(wrapId);
+        const dd = wrap.querySelector('.searchable-filter-dropdown');
+        const isOpen = dd.classList.contains('open');
+        document.querySelectorAll('.searchable-filter-dropdown').forEach(d => d.classList.remove('open'));
+        if (!isOpen) {
+          dd.classList.add('open');
+          const input = dd.querySelector('.searchable-filter-search');
+          input.value = '';
+          input.focus();
+          dd.querySelectorAll('.searchable-filter-option').forEach(o => o.classList.remove('hidden'));
+        }
+      }
+      
+      function filterSelectOptions(input) {
+        const q = input.value.toLowerCase();
+        const wrap = input.closest('.searchable-filter-wrap');
+        wrap.querySelectorAll('.searchable-filter-option').forEach(opt => {
+          opt.classList.toggle('hidden', q && !opt.textContent.toLowerCase().includes(q));
+        });
+      }
+      
+      document.addEventListener('click', function(e) {
+        if (!e.target.closest('.searchable-filter-wrap')) {
+          document.querySelectorAll('.searchable-filter-dropdown').forEach(d => d.classList.remove('open'));
+        }
+      });
     </script>
   </body>
   </html>
@@ -3821,6 +3902,17 @@ function systemDetailPage(opts) {
         padding: 8px;
         background: #f8fafc;
       }
+      .assignee-search {
+        width: 100%;
+        padding: 6px 10px;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        font-size: 13px;
+        font-family: inherit;
+        margin-bottom: 6px;
+        outline: none;
+      }
+      .assignee-search:focus { border-color: #2563eb; box-shadow: 0 0 0 2px rgba(37,99,235,0.1); }
       .assignee-checkbox-label {
         display: flex;
         align-items: center;
@@ -4072,7 +4164,7 @@ function systemDetailPage(opts) {
       <a href="/" class="navbar-brand">Daily Logger</a>
       <div class="navbar-links">
         <a href="/">Home</a>
-        <a href="/my-tasks">My Tasks</a>
+        <a href="/my-tasks">Tasks</a>
         <a href="/systems">Systems</a>
         <a href="/systems/history">History</a>
         ${admin ? '<a href="/admin">Admin</a>' : ''}
@@ -4231,6 +4323,7 @@ function systemDetailPage(opts) {
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
               <div class="form-group">
                 <label class="form-label">Assigned To</label>
+                <input type="text" class="assignee-search" placeholder="Search users..." oninput="filterAssigneeCheckboxes(this)">
                 <div class="multi-assignee-wrapper">
                   ${userCheckboxes}
                 </div>
@@ -4279,6 +4372,15 @@ function systemDetailPage(opts) {
       document.getElementById('newTaskModal').addEventListener('click', function(e) {
         if (e.target === this) closeNewTaskModal();
       });
+      
+      function filterAssigneeCheckboxes(input) {
+        var q = input.value.toLowerCase();
+        var wrapper = input.nextElementSibling;
+        wrapper.querySelectorAll('.assignee-checkbox-label').forEach(function(label) {
+          var text = label.textContent.toLowerCase();
+          label.style.display = q && !text.includes(q) ? 'none' : '';
+        });
+      }
       
       // Intercept form submission for live sync
       document.getElementById('newTaskForm').addEventListener('submit', async function(e) {
@@ -5354,9 +5456,21 @@ function taskDetailPage(opts) {
         box-shadow: 0 4px 12px rgba(0,0,0,0.1);
         z-index: 100;
         min-width: 200px;
-        max-height: 200px;
+        max-height: 250px;
         overflow-y: auto;
       }
+      .assignee-search-detail {
+        width: 100%;
+        padding: 6px 10px;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        font-size: 13px;
+        font-family: inherit;
+        margin-bottom: 6px;
+        outline: none;
+        box-sizing: border-box;
+      }
+      .assignee-search-detail:focus { border-color: #2563eb; }
       .assignee-checkbox-list { display: flex; flex-direction: column; gap: 2px; }
       .assignee-checkbox-label {
         display: flex;
@@ -5797,7 +5911,7 @@ function taskDetailPage(opts) {
       <a href="/" class="navbar-brand">Daily Logger</a>
       <div class="navbar-links">
         <a href="/">Home</a>
-        <a href="/my-tasks">My Tasks</a>
+        <a href="/my-tasks">Tasks</a>
         <a href="/systems">Systems</a>
         <a href="/systems/history">History</a>
         ${admin ? '<a href="/admin">Admin</a>' : ''}
@@ -5844,6 +5958,7 @@ function taskDetailPage(opts) {
               ${assigneeAvatars ? `<div class="avatar-group">${assigneeAvatars}</div>` : '<span style="color: #94a3b8; font-size: 13px;">Unassigned</span>'}
               <button type="button" class="btn btn-sm btn-secondary" onclick="toggleAssigneeDropdown(event)">Edit</button>
               <div id="assigneeDropdown" class="assignee-dropdown" style="display: none;">
+                <input type="text" class="assignee-search-detail" placeholder="Search users..." oninput="filterDetailAssignees(this)">
                 <div class="assignee-checkbox-list">
                   ${userCheckboxes}
                 </div>
@@ -5985,6 +6100,19 @@ function taskDetailPage(opts) {
         if (event) event.stopPropagation();
         var dropdown = document.getElementById('assigneeDropdown');
         dropdown.style.display = dropdown.style.display === 'none' ? 'block' : 'none';
+        if (dropdown.style.display === 'block') {
+          var searchInput = dropdown.querySelector('.assignee-search-detail');
+          if (searchInput) { searchInput.value = ''; searchInput.focus(); }
+        }
+      }
+      
+      function filterDetailAssignees(input) {
+        var q = input.value.toLowerCase();
+        var list = input.nextElementSibling;
+        list.querySelectorAll('.assignee-checkbox-label').forEach(function(label) {
+          var text = label.textContent.toLowerCase();
+          label.style.display = q && !text.includes(q) ? 'none' : '';
+        });
       }
       
       // Close dropdown when clicking outside
@@ -6968,11 +7096,13 @@ function taskDetailPage(opts) {
 function myTasksPage(opts) {
   const { tasks, systems, users, viewUser, currentUser, admin, escapeHtml } = opts;
   
-  // Build user options for selector
-  const userOptions = (users || []).map(u => 
-    `<option value="${u.username}" ${viewUser === u.username ? 'selected' : ''}>${u.username}</option>`
-  ).join('');
+  // Build user options for selector - include "All" as first option
+  const userOptions = `<option value="all" ${viewUser === 'all' ? 'selected' : ''}>All</option>` +
+    (users || []).map(u => 
+      `<option value="${u.username}" ${viewUser === u.username ? 'selected' : ''}>${u.username}</option>`
+    ).join('');
   
+  const isViewingAll = viewUser === 'all';
   const isViewingOwnTasks = viewUser === currentUser;
   
   // Group tasks by status
@@ -6993,6 +7123,32 @@ function myTasksPage(opts) {
   });
   const completedTasks = tasks.filter(t => t.is_completed);
   
+  const renderChecklistPreview = (task) => {
+    const checklist = task.checklist || [];
+    if (checklist.length === 0) return '';
+    const completedCount = checklist.filter(c => c.is_completed).length;
+    const totalCount = checklist.length;
+    return `
+      <div class="checklist-preview">
+        <button class="checklist-toggle" onclick="event.preventDefault(); event.stopPropagation(); this.closest('.checklist-preview').classList.toggle('open');">
+          <span class="checklist-toggle-icon">▶</span>
+          <span class="checklist-progress-text">Checklist ${completedCount}/${totalCount}</span>
+          <div class="checklist-mini-bar">
+            <div class="checklist-mini-bar-fill" style="width: ${totalCount > 0 ? (completedCount / totalCount * 100) : 0}%;"></div>
+          </div>
+        </button>
+        <div class="checklist-dropdown">
+          ${checklist.map(item => `
+            <div class="checklist-preview-item ${item.is_completed ? 'completed' : ''}">
+              <input type="checkbox" ${item.is_completed ? 'checked' : ''} onchange="event.stopPropagation(); toggleChecklistFromTask(${item.id}, ${task.id}, this.checked)" />
+              <span>${escapeHtml(item.title)}</span>
+            </div>
+          `).join('')}
+        </div>
+      </div>
+    `;
+  };
+  
   const renderTaskCard = (task, showSystem = true) => {
     const priorityClass = {
       low: 'badge-gray',
@@ -7003,13 +7159,21 @@ function myTasksPage(opts) {
     
     const isOverdue = task.due_date && !task.is_completed && new Date(task.due_date) < new Date();
     
+    const assignedUsers = task.assigned_to ? task.assigned_to.split(',').map(a => a.trim()).filter(a => a) : [];
+    const assigneeAvatars = isViewingAll && assignedUsers.length > 0 ? assignedUsers.map(a =>
+      `<span class="avatar avatar-sm" title="${escapeHtml(a)}">${a.charAt(0).toUpperCase()}</span>`
+    ).join('') : '';
+    
     return `
-      <div class="task-card ${task.is_completed ? 'completed' : ''}" data-task-id="${task.id}">
+      <div class="task-card ${task.is_completed ? 'completed' : ''}" data-task-id="${task.id}" data-title="${escapeHtml(task.title).toLowerCase()}" data-system="${escapeHtml(task.system_name || '').toLowerCase()}" data-priority="${task.priority || 'medium'}">
         <div class="task-checkbox">
           <input type="checkbox" ${task.is_completed ? 'checked' : ''} onchange="toggleTask(${task.id}, ${task.system_id}, this.checked)">
         </div>
         <div class="task-info">
-          <a href="/systems/${task.system_id}/tasks/${task.id}" class="task-title">${escapeHtml(task.title)}</a>
+          <div class="task-title-row">
+            <a href="/systems/${task.system_id}/tasks/${task.id}" class="task-title">${escapeHtml(task.title)}</a>
+            ${assigneeAvatars ? `<div class="task-assignees">${assigneeAvatars}</div>` : ''}
+          </div>
           ${showSystem && task.system_name ? `
             <a href="/systems/${task.system_id}" class="task-system" style="border-left-color: ${task.system_color || '#3b82f6'};">
               ${escapeHtml(task.system_name)}
@@ -7019,6 +7183,7 @@ function myTasksPage(opts) {
             <span class="badge ${priorityClass}">${task.priority || 'medium'}</span>
             ${task.due_date ? `<span class="task-due ${isOverdue ? 'overdue' : ''}">${isOverdue ? '⚠️' : '📅'} ${task.due_date}</span>` : ''}
           </div>
+          ${renderChecklistPreview(task)}
         </div>
       </div>
     `;
@@ -7030,11 +7195,13 @@ function myTasksPage(opts) {
     </a>
   `).join('');
   
+  const pageTitle = isViewingAll ? 'Tasks' : (isViewingOwnTasks ? 'Tasks' : `${escapeHtml(viewUser)}'s Tasks`);
+  
   return `
   <!DOCTYPE html>
   <html>
   <head>
-    <title>My Tasks - Daily Logger</title>
+    <title>Tasks - Daily Logger</title>
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <style>
       ${systemsBaseCss()}
@@ -7099,15 +7266,19 @@ function myTasksPage(opts) {
       .task-card.completed .task-title { text-decoration: line-through; color: #94a3b8; }
       .task-checkbox input { width: 18px; height: 18px; cursor: pointer; margin-top: 2px; }
       .task-info { flex: 1; min-width: 0; }
+      .task-title-row { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
       .task-title { 
         display: block;
         font-size: 15px; 
         font-weight: 500; 
         color: #0f172a; 
         text-decoration: none;
-        margin-bottom: 4px;
+        flex: 1;
+        min-width: 0;
       }
       .task-title:hover { color: #2563eb; }
+      .task-assignees { display: flex; gap: 2px; flex-shrink: 0; }
+      .avatar-sm { width: 22px; height: 22px; font-size: 10px; }
       .task-system {
         display: inline-block;
         font-size: 12px;
@@ -7121,6 +7292,154 @@ function myTasksPage(opts) {
       .task-meta { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
       .task-due { font-size: 12px; color: #64748b; }
       .task-due.overdue { color: #dc2626; font-weight: 500; }
+      
+      /* Checklist preview styles */
+      .checklist-preview { margin-top: 8px; }
+      .checklist-toggle {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        background: #f1f5f9;
+        border: 1px solid #e2e8f0;
+        border-radius: 6px;
+        padding: 5px 10px;
+        cursor: pointer;
+        font-size: 12px;
+        color: #475569;
+        font-family: inherit;
+        transition: all 0.15s;
+        width: 100%;
+      }
+      .checklist-toggle:hover { background: #e2e8f0; }
+      .checklist-toggle-icon {
+        font-size: 9px;
+        transition: transform 0.2s;
+        display: inline-block;
+      }
+      .checklist-preview.open .checklist-toggle-icon { transform: rotate(90deg); }
+      .checklist-progress-text { flex-shrink: 0; font-weight: 500; }
+      .checklist-mini-bar {
+        flex: 1;
+        height: 5px;
+        background: #e2e8f0;
+        border-radius: 999px;
+        overflow: hidden;
+        min-width: 40px;
+      }
+      .checklist-mini-bar-fill {
+        height: 100%;
+        background: #22c55e;
+        border-radius: 999px;
+        transition: width 0.3s;
+      }
+      .checklist-dropdown {
+        display: none;
+        margin-top: 6px;
+        padding: 6px 0;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        background: white;
+      }
+      .checklist-preview.open .checklist-dropdown { display: block; }
+      .checklist-preview-item {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 12px;
+        font-size: 13px;
+        color: #334155;
+      }
+      .checklist-preview-item.completed span { text-decoration: line-through; color: #94a3b8; }
+      .checklist-preview-item input[type="checkbox"] { width: 15px; height: 15px; cursor: pointer; flex-shrink: 0; }
+      
+      /* Task search bar */
+      .task-search-bar {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+        margin-bottom: 20px;
+        flex-wrap: wrap;
+      }
+      .task-search-input {
+        flex: 1;
+        min-width: 200px;
+        padding: 10px 14px 10px 36px;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        font-size: 14px;
+        font-family: inherit;
+        background: white url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='11' cy='11' r='8'%3E%3C/circle%3E%3Cline x1='21' y1='21' x2='16.65' y2='16.65'%3E%3C/line%3E%3C/svg%3E") no-repeat 12px center;
+        transition: border-color 0.15s, box-shadow 0.15s;
+      }
+      .task-search-input:focus {
+        outline: none;
+        border-color: #2563eb;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+      }
+      .task-search-count {
+        font-size: 13px;
+        color: #94a3b8;
+        white-space: nowrap;
+      }
+      
+      /* Searchable user selector */
+      .searchable-select-wrap {
+        position: relative;
+        min-width: 170px;
+      }
+      .searchable-select-trigger {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 8px 12px;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        font-size: 14px;
+        background: white;
+        cursor: pointer;
+        user-select: none;
+        transition: border-color 0.15s;
+      }
+      .searchable-select-trigger:hover { border-color: #cbd5e1; }
+      .searchable-select-trigger .ss-value { flex: 1; }
+      .searchable-select-trigger .ss-arrow { font-size: 10px; color: #94a3b8; }
+      .searchable-select-dropdown {
+        display: none;
+        position: absolute;
+        top: calc(100% + 4px);
+        left: 0;
+        right: 0;
+        background: white;
+        border: 1px solid #e2e8f0;
+        border-radius: 8px;
+        box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+        z-index: 50;
+        max-height: 260px;
+        overflow: hidden;
+        flex-direction: column;
+      }
+      .searchable-select-dropdown.open { display: flex; }
+      .searchable-select-search {
+        padding: 8px 10px;
+        border: none;
+        border-bottom: 1px solid #e2e8f0;
+        font-size: 13px;
+        font-family: inherit;
+        outline: none;
+      }
+      .searchable-select-options {
+        overflow-y: auto;
+        max-height: 200px;
+      }
+      .searchable-select-option {
+        padding: 8px 12px;
+        font-size: 13px;
+        cursor: pointer;
+        transition: background 0.1s;
+      }
+      .searchable-select-option:hover { background: #f1f5f9; }
+      .searchable-select-option.active { background: #eff6ff; color: #2563eb; font-weight: 500; }
+      .searchable-select-option.hidden { display: none; }
       
       .sidebar-section {
         background: white;
@@ -7171,17 +7490,6 @@ function myTasksPage(opts) {
         color: #64748b;
         font-weight: 500;
       }
-      .user-selector select {
-        padding: 8px 12px;
-        border: 1px solid #e2e8f0;
-        border-radius: 8px;
-        font-size: 14px;
-        background: white;
-        min-width: 150px;
-        cursor: pointer;
-      }
-      .user-selector select:hover { border-color: #cbd5e1; }
-      .user-selector select:focus { outline: none; border-color: #2563eb; box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1); }
       
       .viewing-other-user {
         background: #eff6ff;
@@ -7202,7 +7510,7 @@ function myTasksPage(opts) {
       <a href="/" class="navbar-brand">Daily Logger</a>
       <div class="navbar-links">
         <a href="/">Home</a>
-        <a href="/my-tasks" style="color: #0f172a;">My Tasks</a>
+        <a href="/my-tasks" style="color: #0f172a;">Tasks</a>
         <a href="/systems">Systems</a>
         ${admin ? '<a href="/admin">Admin</a>' : ''}
       </div>
@@ -7210,27 +7518,45 @@ function myTasksPage(opts) {
     
     <div class="container">
       <div class="page-header">
-        <h1 class="page-title">${isViewingOwnTasks ? 'My Tasks' : `${escapeHtml(viewUser)}'s Tasks`}</h1>
+        <h1 class="page-title">${pageTitle}</h1>
         <div class="user-selector">
           <label>View tasks for:</label>
-          <select onchange="window.location.href='/my-tasks?user=' + this.value">
-            ${userOptions}
-          </select>
+          <div class="searchable-select-wrap" id="userSelectWrap">
+            <div class="searchable-select-trigger" onclick="toggleSearchableSelect('userSelectWrap')">
+              <span class="ss-value">${isViewingAll ? 'All' : escapeHtml(viewUser)}</span>
+              <span class="ss-arrow">▼</span>
+            </div>
+            <div class="searchable-select-dropdown" id="userSelectDropdown">
+              <input type="text" class="searchable-select-search" placeholder="Search users..." oninput="filterSearchableOptions(this, 'userSelectWrap')">
+              <div class="searchable-select-options">
+                <div class="searchable-select-option ${isViewingAll ? 'active' : ''}" data-value="all" onclick="selectSearchableOption('/my-tasks?user=all')">All</div>
+                ${(users || []).map(u => `
+                  <div class="searchable-select-option ${viewUser === u.username ? 'active' : ''}" data-value="${u.username}" onclick="selectSearchableOption('/my-tasks?user=${encodeURIComponent(u.username)}')">
+                    ${escapeHtml(u.username)}
+                  </div>
+                `).join('')}
+              </div>
+            </div>
+          </div>
         </div>
       </div>
       
-      ${!isViewingOwnTasks ? `
+      ${!isViewingAll && !isViewingOwnTasks ? `
         <div class="viewing-other-user">
           <span>👤 Viewing tasks assigned to <strong>${escapeHtml(viewUser)}</strong></span>
-          <a href="/my-tasks">← Back to my tasks</a>
+          <a href="/my-tasks">← Back to all tasks</a>
         </div>
       ` : ''}
+      
+      <div class="task-search-bar">
+        <input type="text" class="task-search-input" id="taskSearchInput" placeholder="Search tasks by title, system, or priority..." oninput="filterTasks()">
+        <span class="task-search-count" id="taskSearchCount"></span>
       </div>
       
       <div class="dashboard-grid">
-        <div class="main-content">
+        <div class="main-content" id="tasksContainer">
           ${overdueTasks.length > 0 ? `
-            <div class="task-section overdue">
+            <div class="task-section overdue" data-section="overdue">
               <div class="task-section-header">
                 <span>⚠️</span>
                 <h3>Overdue</h3>
@@ -7243,7 +7569,7 @@ function myTasksPage(opts) {
           ` : ''}
           
           ${todayTasks.length > 0 ? `
-            <div class="task-section today">
+            <div class="task-section today" data-section="today">
               <div class="task-section-header">
                 <span>📅</span>
                 <h3>Due Today</h3>
@@ -7255,7 +7581,7 @@ function myTasksPage(opts) {
             </div>
           ` : ''}
           
-          <div class="task-section">
+          <div class="task-section" data-section="todo">
             <div class="task-section-header">
               <span>📋</span>
               <h3>To Do</h3>
@@ -7267,7 +7593,7 @@ function myTasksPage(opts) {
           </div>
           
           ${completedTasks.length > 0 ? `
-            <div class="task-section">
+            <div class="task-section" data-section="completed">
               <div class="task-section-header">
                 <span>✅</span>
                 <h3>Completed</h3>
@@ -7305,7 +7631,7 @@ function myTasksPage(opts) {
           
           ${systems.length > 0 ? `
             <div class="sidebar-section">
-              <h4>${isViewingOwnTasks ? 'My Systems' : `${escapeHtml(viewUser)}'s Systems`}</h4>
+              <h4>${isViewingAll ? 'Systems' : (isViewingOwnTasks ? 'My Systems' : `${escapeHtml(viewUser)}'s Systems`)}</h4>
               ${systemCards}
             </div>
           ` : ''}
@@ -7326,6 +7652,106 @@ function myTasksPage(opts) {
           console.error('Error toggling task:', e);
         }
       }
+      
+      async function toggleChecklistFromTask(itemId, taskId, completed) {
+        try {
+          await fetch('/api/checklist/' + itemId, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ is_completed: completed ? 1 : 0 })
+          });
+          // Update UI inline
+          const item = event.target.closest('.checklist-preview-item');
+          if (completed) {
+            item.classList.add('completed');
+          } else {
+            item.classList.remove('completed');
+          }
+          // Update the progress bar and text
+          const preview = event.target.closest('.checklist-preview');
+          const items = preview.querySelectorAll('.checklist-preview-item');
+          const doneCount = preview.querySelectorAll('.checklist-preview-item.completed').length;
+          const totalCount = items.length;
+          preview.querySelector('.checklist-progress-text').textContent = 'Checklist ' + doneCount + '/' + totalCount;
+          preview.querySelector('.checklist-mini-bar-fill').style.width = (totalCount > 0 ? (doneCount / totalCount * 100) : 0) + '%';
+        } catch (e) {
+          console.error('Error toggling checklist item:', e);
+          location.reload();
+        }
+      }
+      
+      // Task search
+      function filterTasks() {
+        const query = document.getElementById('taskSearchInput').value.toLowerCase().trim();
+        const cards = document.querySelectorAll('.task-card');
+        let visibleCount = 0;
+        
+        cards.forEach(card => {
+          const title = card.getAttribute('data-title') || '';
+          const system = card.getAttribute('data-system') || '';
+          const priority = card.getAttribute('data-priority') || '';
+          const matches = !query || title.includes(query) || system.includes(query) || priority.includes(query);
+          card.style.display = matches ? '' : 'none';
+          if (matches) visibleCount++;
+        });
+        
+        // Update section counts
+        document.querySelectorAll('.task-section').forEach(section => {
+          const visibleInSection = section.querySelectorAll('.task-card:not([style*="display: none"])').length;
+          const countEl = section.querySelector('.count');
+          if (countEl) countEl.textContent = visibleInSection;
+          // Hide section if no visible cards
+          if (query && visibleInSection === 0) {
+            section.style.display = 'none';
+          } else {
+            section.style.display = '';
+          }
+        });
+        
+        const countEl = document.getElementById('taskSearchCount');
+        if (query) {
+          countEl.textContent = visibleCount + ' result' + (visibleCount !== 1 ? 's' : '');
+        } else {
+          countEl.textContent = '';
+        }
+      }
+      
+      // Searchable select
+      function toggleSearchableSelect(wrapId) {
+        const wrap = document.getElementById(wrapId);
+        const dd = wrap.querySelector('.searchable-select-dropdown');
+        const isOpen = dd.classList.contains('open');
+        // Close all
+        document.querySelectorAll('.searchable-select-dropdown').forEach(d => d.classList.remove('open'));
+        if (!isOpen) {
+          dd.classList.add('open');
+          const searchInput = dd.querySelector('.searchable-select-search');
+          searchInput.value = '';
+          searchInput.focus();
+          // Reset filter
+          dd.querySelectorAll('.searchable-select-option').forEach(o => o.classList.remove('hidden'));
+        }
+      }
+      
+      function filterSearchableOptions(input, wrapId) {
+        const query = input.value.toLowerCase();
+        const wrap = document.getElementById(wrapId);
+        wrap.querySelectorAll('.searchable-select-option').forEach(opt => {
+          const text = opt.textContent.toLowerCase();
+          opt.classList.toggle('hidden', query && !text.includes(query));
+        });
+      }
+      
+      function selectSearchableOption(url) {
+        window.location.href = url;
+      }
+      
+      // Close dropdowns on outside click
+      document.addEventListener('click', function(e) {
+        if (!e.target.closest('.searchable-select-wrap')) {
+          document.querySelectorAll('.searchable-select-dropdown').forEach(d => d.classList.remove('open'));
+        }
+      });
     </script>
   </body>
   </html>
@@ -7481,7 +7907,7 @@ function historyPage(opts) {
       <a href="/" class="navbar-brand">Daily Logger</a>
       <div class="navbar-links">
         <a href="/">Home</a>
-        <a href="/my-tasks">My Tasks</a>
+        <a href="/my-tasks">Tasks</a>
         <a href="/systems">Systems</a>
         <a href="/systems/history" class="active">History</a>
       </div>

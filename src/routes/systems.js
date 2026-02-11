@@ -123,7 +123,7 @@ module.exports = function registerSystemsRoutes(app, deps) {
 		}
 	});
 
-	// My Tasks page - shows all tasks assigned to a user
+	// Tasks page - shows all tasks or tasks assigned to a specific user
 	app.get("/my-tasks", async (req, res) => {
 		const currentUser = getCurrentUser(req);
 		const admin = isAdmin(req);
@@ -132,30 +132,69 @@ module.exports = function registerSystemsRoutes(app, deps) {
 		}
 
 		try {
-			// Allow viewing other users' tasks via query param
-			const viewUser = req.query.user || currentUser || "admin";
+			// Default to "all" to show all tasks; allow filtering by user via query param
+			const viewUser = req.query.user || "all";
 			
 			// Get all users for the dropdown
 			const users = await dbAll("SELECT username FROM users ORDER BY username");
 			
-			// Get all tasks assigned to the selected user with system info (supports comma-separated assignees)
-			const tasks = await dbAll(
-				`SELECT t.*, s.name as system_name, s.color as system_color, s.id as system_id
-				 FROM system_tasks t
-				 LEFT JOIN systems s ON t.system_id = s.id
-				 WHERE t.assigned_to = ? OR t.assigned_to LIKE ? OR t.assigned_to LIKE ? OR t.assigned_to LIKE ?
-				 ORDER BY t.is_completed ASC, t.due_date ASC, t.priority DESC, t.created_at DESC`,
-				[viewUser, `${viewUser},%`, `%,${viewUser},%`, `%,${viewUser}`]
-			);
+			let tasks;
+			let systems;
 			
-			// Get all systems this user is associated with (created by or has tasks in)
-			const systems = await dbAll(
-				`SELECT DISTINCT s.* FROM systems s
-				 LEFT JOIN system_tasks t ON s.id = t.system_id
-				 WHERE s.created_by = ? OR t.assigned_to = ? OR t.assigned_to LIKE ? OR t.assigned_to LIKE ? OR t.assigned_to LIKE ?
-				 ORDER BY s.name ASC`,
-				[viewUser, viewUser, `${viewUser},%`, `%,${viewUser},%`, `%,${viewUser}`]
-			);
+			if (viewUser === "all") {
+				// Get ALL tasks with system info
+				tasks = await dbAll(
+					`SELECT t.*, s.name as system_name, s.color as system_color, s.id as system_id
+					 FROM system_tasks t
+					 LEFT JOIN systems s ON t.system_id = s.id
+					 ORDER BY t.is_completed ASC, t.due_date ASC, t.priority DESC, t.created_at DESC`
+				);
+				
+				// Get all systems
+				systems = await dbAll(
+					`SELECT * FROM systems ORDER BY name ASC`
+				);
+			} else {
+				// Get tasks assigned to the selected user with system info (supports comma-separated assignees)
+				tasks = await dbAll(
+					`SELECT t.*, s.name as system_name, s.color as system_color, s.id as system_id
+					 FROM system_tasks t
+					 LEFT JOIN systems s ON t.system_id = s.id
+					 WHERE t.assigned_to = ? OR t.assigned_to LIKE ? OR t.assigned_to LIKE ? OR t.assigned_to LIKE ?
+					 ORDER BY t.is_completed ASC, t.due_date ASC, t.priority DESC, t.created_at DESC`,
+					[viewUser, `${viewUser},%`, `%,${viewUser},%`, `%,${viewUser}`]
+				);
+				
+				// Get all systems this user is associated with (created by or has tasks in)
+				systems = await dbAll(
+					`SELECT DISTINCT s.* FROM systems s
+					 LEFT JOIN system_tasks t ON s.id = t.system_id
+					 WHERE s.created_by = ? OR t.assigned_to = ? OR t.assigned_to LIKE ? OR t.assigned_to LIKE ? OR t.assigned_to LIKE ?
+					 ORDER BY s.name ASC`,
+					[viewUser, viewUser, `${viewUser},%`, `%,${viewUser},%`, `%,${viewUser}`]
+				);
+			}
+			
+			// Load checklist items for each task
+			const taskIds = tasks.map(t => t.id);
+			let checklists = {};
+			if (taskIds.length > 0) {
+				const placeholders = taskIds.map(() => '?').join(',');
+				const checklistRows = await dbAll(
+					`SELECT * FROM task_checklist WHERE task_id IN (${placeholders}) ORDER BY position ASC, id ASC`,
+					taskIds
+				);
+				for (const item of checklistRows) {
+					if (!checklists[item.task_id]) checklists[item.task_id] = [];
+					checklists[item.task_id].push(item);
+				}
+			}
+			
+			// Attach checklist to each task
+			tasks = tasks.map(t => ({
+				...t,
+				checklist: checklists[t.id] || []
+			}));
 			
 			res.send(views.myTasksPage({
 				tasks,
@@ -167,7 +206,7 @@ module.exports = function registerSystemsRoutes(app, deps) {
 				escapeHtml
 			}));
 		} catch (err) {
-			console.error("Error loading my tasks page:", err);
+			console.error("Error loading tasks page:", err);
 			res.status(500).send("Error loading tasks");
 		}
 	});
