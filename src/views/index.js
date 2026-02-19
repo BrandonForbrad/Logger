@@ -3214,12 +3214,34 @@ function systemsListPage(opts) {
     `<option value="${t}" ${filterTag === t ? 'selected' : ''}>${t}</option>`
   ).join('');
   
-  const systemCards = (systems || []).map(s => {
+  // Sort: systems with pending (incomplete) tasks first, fully done / no tasks last
+  const sortedSystems = [...(systems || [])].sort((a, b) => {
+    const aPending = (a.tasks || []).filter(t => !t.is_completed).length;
+    const bPending = (b.tasks || []).filter(t => !t.is_completed).length;
+    if (aPending > 0 && bPending === 0) return -1;
+    if (aPending === 0 && bPending > 0) return 1;
+    return 0; // preserve original order within each group
+  });
+
+  const systemCards = sortedSystems.map(s => {
     const taskCount = s.tasks?.length || 0;
     const completedCount = s.tasks?.filter(t => t.is_completed).length || 0;
+    const pendingCount = taskCount - completedCount;
+    const hasPending = pendingCount > 0;
     const tags = s.tags ? s.tags.split(',').map(t => 
       `<span class="tag">${t.trim()}</span>`
     ).join('') : '';
+
+    // Collect unique assignees from incomplete (TODO) tasks
+    const todoAssignees = new Set();
+    (s.tasks || []).forEach(t => {
+      if (!t.is_completed && t.assigned_to) {
+        t.assigned_to.split(',').map(a => a.trim()).filter(a => a).forEach(a => todoAssignees.add(a));
+      }
+    });
+    const todoAvatars = [...todoAssignees].map(a =>
+      `<span class="avatar" title="${a} has TODO tasks" style="font-size:11px;width:24px;height:24px;line-height:24px;">${a.charAt(0).toUpperCase()}</span>`
+    ).join('');
     
     return `
       <a href="/systems/${s.id}" class="system-card" style="border-left: 4px solid ${s.color || '#3b82f6'};">
@@ -3230,8 +3252,9 @@ function systemsListPage(opts) {
         ${s.description ? `<p class="system-card-desc">${s.description}</p>` : ''}
         <div class="system-card-meta">
           <span class="badge badge-gray">${taskCount} task${taskCount !== 1 ? 's' : ''}</span>
-          ${taskCount > 0 ? `<span class="badge badge-green">${completedCount}/${taskCount} done</span>` : ''}
+          ${taskCount > 0 ? `<span class="badge ${hasPending ? 'badge-red' : 'badge-green'}">${completedCount}/${taskCount} done</span>` : ''}
         </div>
+        ${hasPending && todoAvatars ? `<div class="system-card-todo-assignees"><span style="font-size:11px;color:#dc2626;font-weight:600;">TODO:</span> ${todoAvatars}</div>` : ''}
         ${tags ? `<div class="system-card-tags">${tags}</div>` : ''}
       </a>
     `;
@@ -3272,6 +3295,7 @@ function systemsListPage(opts) {
       .system-card-desc { margin: 0 0 12px; font-size: 14px; color: #64748b; line-height: 1.5; }
       .system-card-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 8px; }
       .system-card-tags { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 8px; }
+      .system-card-todo-assignees { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; margin-top: 6px; }
       
       /* Searchable filter dropdown */
       .searchable-filter-wrap { position: relative; min-width: 130px; }
