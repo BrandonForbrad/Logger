@@ -259,6 +259,92 @@ db.serialize(() => {
   db.run("ALTER TABLE system_tasks ADD COLUMN tags TEXT", () => {});
   db.run("ALTER TABLE system_tasks ADD COLUMN created_by TEXT", () => {});
   db.run("ALTER TABLE system_tasks ADD COLUMN completed_by TEXT", () => {});
+
+  // ── Timeline Roadmaps ──
+  db.run(`
+    CREATE TABLE IF NOT EXISTS roadmaps (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      description TEXT,
+      color TEXT DEFAULT '#2563eb',
+      created_by TEXT,
+      created_at TEXT,
+      updated_at TEXT
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS roadmap_milestones (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      roadmap_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      content TEXT,
+      due_date TEXT,
+      status TEXT DEFAULT 'not-started',
+      position INTEGER DEFAULT 0,
+      color TEXT DEFAULT '#2563eb',
+      task_id INTEGER,
+      system_id INTEGER,
+      google_docs_url TEXT,
+      created_by TEXT,
+      created_at TEXT,
+      updated_at TEXT,
+      completed_at TEXT,
+      FOREIGN KEY (roadmap_id) REFERENCES roadmaps(id) ON DELETE CASCADE,
+      FOREIGN KEY (task_id) REFERENCES system_tasks(id) ON DELETE SET NULL,
+      FOREIGN KEY (system_id) REFERENCES systems(id) ON DELETE SET NULL
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS roadmap_attachments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      milestone_id INTEGER NOT NULL,
+      filename TEXT NOT NULL,
+      original_name TEXT,
+      mime_type TEXT,
+      size INTEGER,
+      uploaded_by TEXT,
+      uploaded_at TEXT,
+      FOREIGN KEY (milestone_id) REFERENCES roadmap_milestones(id) ON DELETE CASCADE
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS milestone_steps (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      milestone_id INTEGER NOT NULL,
+      title TEXT NOT NULL,
+      description TEXT,
+      duration_days REAL DEFAULT 1,
+      status TEXT DEFAULT 'not-started',
+      position INTEGER DEFAULT 0,
+      task_id INTEGER,
+      completed_at TEXT,
+      created_at TEXT,
+      updated_at TEXT,
+      FOREIGN KEY (milestone_id) REFERENCES roadmap_milestones(id) ON DELETE CASCADE,
+      FOREIGN KEY (task_id) REFERENCES system_tasks(id) ON DELETE SET NULL
+    )
+  `);
+
+  // Migration: add start_date / end_date to milestone_steps
+  db.run("ALTER TABLE milestone_steps ADD COLUMN start_date TEXT", () => {});
+  db.run("ALTER TABLE milestone_steps ADD COLUMN end_date TEXT", () => {});
+
+  // Junction table for multiple tasks per step
+  db.run(`
+    CREATE TABLE IF NOT EXISTS step_tasks (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      step_id INTEGER NOT NULL,
+      task_id INTEGER NOT NULL,
+      created_at TEXT,
+      FOREIGN KEY (step_id) REFERENCES milestone_steps(id) ON DELETE CASCADE,
+      FOREIGN KEY (task_id) REFERENCES system_tasks(id) ON DELETE CASCADE,
+      UNIQUE(step_id, task_id)
+    )
+  `);
 });
 
 module.exports = db;

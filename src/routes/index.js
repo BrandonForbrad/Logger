@@ -27,6 +27,7 @@ const { registerLogsReadRoutes, registerLogsWriteRoutes } = require("./logs");
 const registerAdminCoreRoutes = require("./adminCore");
 const registerUploaderRoutes = require("./uploader");
 const registerSystemsRoutes = require("./systems");
+const registerRoadmapRoutes = require("./roadmaps");
 
 const app = express();
 
@@ -163,6 +164,16 @@ registerUploaderRoutes(app, {
 });
 
 registerSystemsRoutes(app, {
+	db,
+	isAdmin,
+	getCurrentUser,
+	escapeHtml,
+	upload,
+	views,
+	uploadDir,
+});
+
+registerRoadmapRoutes(app, {
 	db,
 	isAdmin,
 	getCurrentUser,
