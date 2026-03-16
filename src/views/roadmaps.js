@@ -86,7 +86,9 @@ function roadmapsListPage(opts) {
           + New Roadmap
         </button>
       </div>
+    </nav>
 
+    <div class="container">
       ${roadmaps.length === 0 ? `
         <div class="empty-state">
           <h3>No roadmaps yet</h3>
@@ -757,6 +759,9 @@ function roadmapDetailPage(opts) {
           <button class="btn btn-secondary" onclick="openRoadmapSettings()">Settings</button>
         </div>
       </div>
+    </nav>
+
+    <div class="container">
       ${roadmap.description ? `<div class="roadmap-meta">${escapeHtml(roadmap.description)}</div>` : ''}
 
       <div class="timeline-wrapper" id="timelineWrapper">
