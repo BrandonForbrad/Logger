@@ -28,6 +28,7 @@ const registerAdminCoreRoutes = require("./adminCore");
 const registerUploaderRoutes = require("./uploader");
 const registerSystemsRoutes = require("./systems");
 const registerRoadmapRoutes = require("./roadmaps");
+const registerProfileRoutes = require("./profile");
 
 const app = express();
 
@@ -86,6 +87,22 @@ const { sessionMiddleware, createSession, destroyCurrentSession } =
 app.use(sessionMiddleware);
 
 const { getSetting, setSetting } = createDbSettings(db);
+
+// Force Discord Integration middleware
+// When enabled, non-admin users without a linked Discord account are redirected to /profile
+app.use((req, res, next) => {
+	const skip = ["/login", "/logout", "/admin", "/auth/discord", "/profile", "/policy", "/uploads"];
+	if (skip.some((p) => req.path === p || req.path.startsWith(p + "/"))) return next();
+	if (!req.currentUser || req.isAdmin) return next();
+
+	getSetting("force_discord_link", (err, val) => {
+		if (val !== "1") return next();
+		db.get("SELECT discord_id FROM users WHERE username = ?", [req.currentUser], (err2, row) => {
+			if (row && row.discord_id) return next();
+			res.redirect("/profile?msg=" + encodeURIComponent("You must link your Discord account to continue.") + "&type=error");
+		});
+	});
+});
 
 // ---------- Route registration (keep order identical) ----------
 registerLogsReadRoutes(app, {
@@ -152,6 +169,17 @@ registerAuthRoutes(app, {
 	createSession,
 	destroyCurrentSession,
 	escapeHtml,
+});
+
+registerProfileRoutes(app, {
+	db,
+	bcrypt,
+	upload,
+	views,
+	getCurrentUser,
+	escapeHtml,
+	uploadDir,
+	getSetting,
 });
 
 registerUploaderRoutes(app, {

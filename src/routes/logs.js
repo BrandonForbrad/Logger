@@ -1211,7 +1211,7 @@ function registerLogsReadRoutes(app, deps) {
 						currentUser
 							? `<span>User: @${escapeHtml(
 									currentUser
-								)}</span> <a href="/logout" class="pill-button pill-button-ghost">User Logout</a>`
+								)}</span> <a href="/profile" class="pill-button pill-button-ghost">Profile</a> <a href="/logout" class="pill-button pill-button-ghost">User Logout</a>`
 							: `<a href="/login" class="pill-button pill-button-ghost">User Login</a>`
 					}
 					<a href="/policy" class="pill-button pill-button-ghost">Timekeeping Policy</a>

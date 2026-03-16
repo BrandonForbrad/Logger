@@ -19,6 +19,8 @@ function registerAdminCoreRoutes(app, deps) {
 		saveAdminPasswordHash,
 	} = deps;
 
+	const { testDiscordBot } = require("../utils/discord");
+
 	app.get("/admin/panel", (req, res) => {
 		if (!isAdmin(req)) {
 			return res.status(403).send("Forbidden");
@@ -182,7 +184,9 @@ function registerAdminCoreRoutes(app, deps) {
 		const CONTACT_DISCORD = getContactDiscord();
 
 		db.all(
-			"SELECT id, username FROM users ORDER BY username ASC",
+			`SELECT u.id, u.username, 
+			   (SELECT s.is_admin FROM sessions s WHERE s.username = u.username AND s.is_admin = 1 LIMIT 1) as is_admin
+			 FROM users u ORDER BY u.username ASC`,
 			(err, users) => {
 				if (err) {
 					res.status(500).send("DB error");
@@ -194,6 +198,11 @@ function registerAdminCoreRoutes(app, deps) {
 						(u) => `
 					<tr>
 						<td>@${escapeHtml(u.username)}</td>
+						<td>
+							<form method="POST" action="/admin/users/toggle-admin/${u.id}" style="display:inline;">
+								<button type="submit" style="background:${u.is_admin ? '#e11d48' : '#22c55e'};">${u.is_admin ? 'Remove Admin' : 'Make Admin'}</button>
+							</form>
+						</td>
 						<td>
 							<form method="POST" action="/admin/users/reset/${u.id}" style="display:flex; gap:4px; align-items:center;">
 								<input type="password" name="password" placeholder="New password" required />
@@ -396,6 +405,129 @@ function registerAdminCoreRoutes(app, deps) {
 					res.redirect("/admin/users")
 				);
 			}
+		});
+	});
+
+	// Toggle admin permissions for a user
+	app.post("/admin/users/toggle-admin/:id", (req, res) => {
+		if (!isAdmin(req)) return res.status(403).send("Forbidden");
+		const id = req.params.id;
+
+		db.get("SELECT username FROM users WHERE id = ?", [id], (selErr, row) => {
+			if (selErr || !row) return res.status(404).send("User not found.");
+			const username = row.username;
+
+			// Check if user has any active admin sessions
+			db.get(
+				"SELECT is_admin FROM sessions WHERE username = ? LIMIT 1",
+				[username],
+				(sessErr, session) => {
+					const currentlyAdmin = session && session.is_admin === 1;
+					const newAdminVal = currentlyAdmin ? 0 : 1;
+
+					// Update all sessions for this user
+					db.run(
+						"UPDATE sessions SET is_admin = ? WHERE username = ?",
+						[newAdminVal, username],
+						(updErr) => {
+							if (updErr) return res.status(500).send("Error updating admin status.");
+							res.redirect("/admin/users");
+						}
+					);
+				}
+			);
+		});
+	});
+
+	// ---------- Admin: Discord Integration ----------
+
+	// Helper to gather all Discord settings and render the page
+	function renderDiscordPage(req, res, msg) {
+		getSetting("discord_bot_token", (e1, token) => {
+			getSetting("discord_client_id", (e2, clientId) => {
+				getSetting("discord_client_secret", (e3, clientSecret) => {
+					getSetting("force_discord_link", (e4, forceVal) => {
+						const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+						const host = req.headers['x-forwarded-host'] || req.headers.host;
+						const redirectUri = `${protocol}://${host}/auth/discord/callback`;
+
+						db.all("SELECT username, discord_id, discord_username FROM users ORDER BY username ASC", (dbErr, users) => {
+							const usersWithDiscord = (users || []).filter(u => u.discord_id);
+							res.send(views.discordSetupPage({
+								botToken: token || "",
+								clientId: clientId || "",
+								clientSecret: clientSecret || "",
+								redirectUri,
+								forceDiscord: forceVal === "1",
+								message: msg,
+								usersWithDiscord,
+							}));
+						});
+					});
+				});
+			});
+		});
+	}
+
+	app.get("/admin/discord", (req, res) => {
+		if (!isAdmin(req)) return res.status(403).send("Forbidden");
+		renderDiscordPage(req, res, null);
+	});
+
+	app.post("/admin/discord", (req, res) => {
+		if (!isAdmin(req)) return res.status(403).send("Forbidden");
+
+		if (req.body.remove === "1") {
+			setSetting("discord_bot_token", "", () => {
+				renderDiscordPage(req, res, { text: "Bot token removed.", type: "ok" });
+			});
+			return;
+		}
+
+		const token = (req.body.bot_token || "").trim();
+		setSetting("discord_bot_token", token, (err) => {
+			if (err) return res.status(500).send("Error saving token.");
+			renderDiscordPage(req, res, { text: "Bot token saved successfully.", type: "ok" });
+		});
+	});
+
+	app.post("/admin/discord/oauth", (req, res) => {
+		if (!isAdmin(req)) return res.status(403).send("Forbidden");
+
+		const clientId = (req.body.client_id || "").trim();
+		const clientSecret = (req.body.client_secret || "").trim();
+
+		setSetting("discord_client_id", clientId, (err1) => {
+			setSetting("discord_client_secret", clientSecret, (err2) => {
+				if (err1 || err2) return res.status(500).send("Error saving OAuth settings.");
+
+				getSetting("discord_bot_token", (e, token) => {
+					renderDiscordPage(req, res, { text: "OAuth settings saved successfully.", type: "ok" });
+				});
+			});
+		});
+	});
+
+	app.post("/admin/discord/test", (req, res) => {
+		if (!isAdmin(req)) return res.status(403).json({ ok: false, error: "Forbidden" });
+
+		getSetting("discord_bot_token", async (err, token) => {
+			if (!token) return res.json({ ok: false, error: "No bot token configured" });
+			const result = await testDiscordBot(token);
+			res.json(result);
+		});
+	});
+
+	app.post("/admin/discord/force", (req, res) => {
+		if (!isAdmin(req)) return res.status(403).send("Forbidden");
+
+		const enabled = req.body.force_discord === "1" ? "1" : "0";
+		setSetting("force_discord_link", enabled, (err) => {
+			if (err) return res.status(500).send("Error saving setting.");
+			renderDiscordPage(req, res, {
+				text: enabled === "1" ? "Force Discord Integration enabled." : "Force Discord Integration disabled.",
+				type: "ok",
+			});
 		});
 	});
 }

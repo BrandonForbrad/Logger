@@ -1,5 +1,7 @@
 const path = require("path");
 const fs = require("fs");
+const { loadProfilePictures } = require("../utils/helpers");
+const { sendDiscordDM } = require("../utils/discord");
 
 module.exports = function registerSystemsRoutes(app, deps) {
 	const { db, isAdmin, getCurrentUser, escapeHtml, upload, views, uploadDir } = deps;
@@ -28,6 +30,19 @@ module.exports = function registerSystemsRoutes(app, deps) {
 				resolve(row || null);
 			});
 		});
+
+	// Send a Discord DM to a user (fire-and-forget, never throws)
+	async function notifyDiscord(username, messageText, link) {
+		try {
+			const setting = await dbGet("SELECT value FROM settings WHERE key = 'discord_bot_token'");
+			const token = setting && setting.value;
+			if (!token) return;
+			const user = await dbGet("SELECT discord_id FROM users WHERE username = ?", [username]);
+			if (!user || !user.discord_id) return;
+			const fullMsg = link ? messageText + '\n\n[**\u27A1 GoTo**](' + link + ')' : messageText;
+			sendDiscordDM(token, user.discord_id, fullMsg).catch(() => {});
+		} catch (e) { /* ignore */ }
+	}
 
 	// ==================== PAGE ROUTES ====================
 
@@ -77,6 +92,7 @@ module.exports = function registerSystemsRoutes(app, deps) {
 			}
 			
 			const users = await dbAll("SELECT username FROM users ORDER BY username");
+			const profilePictures = await loadProfilePictures(db);
 			
 			res.send(views.systemsListPage({
 				systems,
@@ -84,7 +100,8 @@ module.exports = function registerSystemsRoutes(app, deps) {
 				currentUser,
 				admin,
 				filterAssigned,
-				filterTag
+				filterTag,
+				profilePictures
 			}));
 		} catch (err) {
 			console.error("Error loading systems page:", err);
@@ -196,6 +213,8 @@ module.exports = function registerSystemsRoutes(app, deps) {
 				checklist: checklists[t.id] || []
 			}));
 			
+			const profilePictures = await loadProfilePictures(db);
+			
 			res.send(views.myTasksPage({
 				tasks,
 				systems,
@@ -203,7 +222,8 @@ module.exports = function registerSystemsRoutes(app, deps) {
 				viewUser,
 				currentUser: currentUser || "admin",
 				admin,
-				escapeHtml
+				escapeHtml,
+				profilePictures
 			}));
 		} catch (err) {
 			console.error("Error loading tasks page:", err);
@@ -274,13 +294,15 @@ module.exports = function registerSystemsRoutes(app, deps) {
 			);
 			
 			const users = await dbAll("SELECT username FROM users ORDER BY username");
+			const profilePictures = await loadProfilePictures(db);
 
 			res.send(views.systemDetailPage({
 				system: { ...system, tasks, attachments },
 				users,
 				currentUser,
 				admin,
-				escapeHtml
+				escapeHtml,
+				profilePictures
 			}));
 		} catch (err) {
 			console.error("Error loading system:", err);
@@ -360,6 +382,7 @@ module.exports = function registerSystemsRoutes(app, deps) {
 			);
 			
 			const users = await dbAll("SELECT username FROM users ORDER BY username");
+			const profilePictures = await loadProfilePictures(db);
 
 			res.send(views.taskDetailPage({
 				system,
@@ -369,7 +392,8 @@ module.exports = function registerSystemsRoutes(app, deps) {
 				users,
 				currentUser,
 				admin,
-				escapeHtml
+				escapeHtml,
+				profilePictures
 			}));
 		} catch (err) {
 			console.error("Error loading task:", err);
@@ -728,6 +752,19 @@ module.exports = function registerSystemsRoutes(app, deps) {
 			);
 
 			const task = await dbGet("SELECT * FROM system_tasks WHERE id = ?", [result.lastID]);
+
+			// Notify assigned user via Discord
+			if (assigned_to) {
+				const creator = currentUser || "admin";
+				const baseUrl = req.protocol + '://' + req.get('host');
+				const taskLink = baseUrl + '/systems/' + systemId + '/tasks/' + task.id;
+				const assignees = assigned_to.split(",").map(s => s.trim()).filter(Boolean);
+				for (const assignee of assignees) {
+					if (assignee === creator) continue;
+					notifyDiscord(assignee, `**${creator}** assigned you to a new task **${title.trim()}** in **${system.name}**.`, taskLink);
+				}
+			}
+
 			res.json(task);
 		} catch (err) {
 			console.error("Error creating task:", err);
@@ -803,6 +840,22 @@ module.exports = function registerSystemsRoutes(app, deps) {
 			);
 
 			const updated = await dbGet("SELECT * FROM system_tasks WHERE id = ?", [id]);
+
+			// Notify newly assigned user via Discord
+			if (assigned_to !== undefined && assigned_to !== existing.assigned_to && assigned_to) {
+				const assigner = currentUser || "admin";
+				const sys = await dbGet("SELECT name FROM systems WHERE id = ?", [existing.system_id]);
+				const systemName = sys ? sys.name : "a system";
+				const taskTitle = updated.title || existing.title;
+				const baseUrl = req.protocol + '://' + req.get('host');
+				const taskLink = baseUrl + '/systems/' + existing.system_id + '/tasks/' + id;
+				const assignees = assigned_to.split(",").map(s => s.trim()).filter(Boolean);
+				for (const assignee of assignees) {
+					if (assignee === assigner) continue;
+					notifyDiscord(assignee, `**${assigner}** assigned you to task **${taskTitle}** in **${systemName}**.`, taskLink);
+				}
+			}
+
 			res.json(updated);
 		} catch (err) {
 			console.error("Error updating task:", err);
@@ -1164,6 +1217,248 @@ module.exports = function registerSystemsRoutes(app, deps) {
 		} catch (err) {
 			console.error("Error fetching global history:", err);
 			res.status(500).json({ error: "Failed to fetch history" });
+		}
+	});
+
+	// ==================== CHAT API ====================
+
+	// Get chat messages for a context (system or task)
+	app.get("/api/chat/:contextType/:contextId", async (req, res) => {
+		const currentUser = getCurrentUser(req);
+		if (!currentUser && !isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+
+		const { contextType, contextId } = req.params;
+		if (!["system", "task"].includes(contextType)) return res.status(400).json({ error: "Invalid context" });
+
+		try {
+			const messages = await dbAll(
+				`SELECT cm.*, 
+					rm.id as reply_msg_id, rm.sender as reply_sender, rm.body as reply_body,
+					(SELECT COUNT(*) FROM chat_messages WHERE parent_id = cm.id AND deleted = 0) as thread_count
+				FROM chat_messages cm
+				LEFT JOIN chat_messages rm ON cm.reply_to_id = rm.id
+				WHERE cm.context_type = ? AND cm.context_id = ? AND cm.parent_id IS NULL
+				ORDER BY cm.created_at ASC`,
+				[contextType, Number(contextId)]
+			);
+			const pp = await loadProfilePictures(db);
+			res.json({ messages, profilePictures: pp });
+		} catch (err) {
+			console.error("Error fetching chat:", err);
+			res.status(500).json({ error: "Failed to fetch chat" });
+		}
+	});
+
+	// Get thread messages
+	app.get("/api/chat/:contextType/:contextId/thread/:parentId", async (req, res) => {
+		const currentUser = getCurrentUser(req);
+		if (!currentUser && !isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+
+		const { contextType, contextId, parentId } = req.params;
+		try {
+			const parent = await dbGet(
+				"SELECT * FROM chat_messages WHERE id = ? AND context_type = ? AND context_id = ?",
+				[Number(parentId), contextType, Number(contextId)]
+			);
+			const replies = await dbAll(
+				`SELECT cm.*,
+					rm.id as reply_msg_id, rm.sender as reply_sender, rm.body as reply_body
+				FROM chat_messages cm
+				LEFT JOIN chat_messages rm ON cm.reply_to_id = rm.id
+				WHERE cm.parent_id = ? AND cm.context_type = ? AND cm.context_id = ?
+				ORDER BY cm.created_at ASC`,
+				[Number(parentId), contextType, Number(contextId)]
+			);
+			res.json({ parent, replies });
+		} catch (err) {
+			console.error("Error fetching thread:", err);
+			res.status(500).json({ error: "Failed to fetch thread" });
+		}
+	});
+
+	// Post a chat message (supports JSON or multipart with file)
+	app.post("/api/chat/:contextType/:contextId", upload.array("files", 1), async (req, res) => {
+		const currentUser = getCurrentUser(req);
+		if (!currentUser && !isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+
+		const { contextType, contextId } = req.params;
+		if (!["system", "task"].includes(contextType)) return res.status(400).json({ error: "Invalid context" });
+
+		const body = (req.body.body || "").trim();
+		const parent_id = req.body.parent_id || null;
+		const reply_to_id = req.body.reply_to_id || null;
+		const file = req.files && req.files[0];
+
+		if (!body && !file) return res.status(400).json({ error: "Message body or file required" });
+
+		const sender = currentUser || "admin";
+		const now = new Date().toISOString();
+		const sanitizedBody = body || (file ? "" : "");
+
+		try {
+			const result = await dbRun(
+				`INSERT INTO chat_messages (context_type, context_id, sender, body, parent_id, reply_to_id, attachment_filename, attachment_original_name, attachment_mime_type, attachment_size, created_at, updated_at)
+				 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				[contextType, Number(contextId), sender, sanitizedBody,
+				 parent_id || null, reply_to_id || null,
+				 file ? file.filename : null,
+				 file ? file.originalname : null,
+				 file ? file.mimetype : null,
+				 file ? file.size : null,
+				 now, now]
+			);
+
+			const message = await dbGet("SELECT * FROM chat_messages WHERE id = ?", [result.lastID]);
+
+			// If reply_to_id, fetch the replied-to message info
+			if (reply_to_id) {
+				const rm = await dbGet("SELECT id, sender, body FROM chat_messages WHERE id = ?", [reply_to_id]);
+				if (rm) {
+					message.reply_sender = rm.sender;
+					message.reply_body = rm.body;
+					message.reply_msg_id = rm.id;
+				}
+			}
+
+			// Parse @mentions and create notifications
+			const mentionRegex = /@(\w+)/g;
+			let match;
+			const mentioned = new Set();
+			while ((match = mentionRegex.exec(sanitizedBody)) !== null) {
+				mentioned.add(match[1]);
+			}
+			for (const username of mentioned) {
+				if (username === sender) continue;
+				const user = await dbGet("SELECT username FROM users WHERE username = ?", [username]);
+				if (user) {
+					await dbRun(
+						`INSERT INTO chat_notifications (username, message_id, context_type, context_id, is_read, created_at)
+						 VALUES (?, ?, ?, ?, 0, ?)`,
+						[username, result.lastID, contextType, Number(contextId), now]
+					);
+
+					// Send Discord DM
+					let contextName = "";
+					if (contextType === "system") {
+						const sys = await dbGet("SELECT name FROM systems WHERE id = ?", [Number(contextId)]);
+						contextName = sys ? sys.name : "a system";
+					} else {
+						const task = await dbGet("SELECT title FROM system_tasks WHERE id = ?", [Number(contextId)]);
+						contextName = task ? task.title : "a task";
+					}
+					const preview = sanitizedBody.length > 100 ? sanitizedBody.substring(0, 100) + "..." : sanitizedBody;
+					const baseUrl = req.protocol + '://' + req.get('host');
+					let chatLink;
+					if (contextType === 'system') {
+						chatLink = baseUrl + '/systems/' + contextId + '?chatMsg=' + result.lastID;
+					} else {
+						const taskRow = await dbGet('SELECT system_id FROM system_tasks WHERE id = ?', [Number(contextId)]);
+						chatLink = baseUrl + '/systems/' + (taskRow ? taskRow.system_id : 0) + '/tasks/' + contextId + '?chatMsg=' + result.lastID;
+					}
+					notifyDiscord(username, `**@${sender}** mentioned you in **${contextName}** (${contextType}):\n> ${preview}`, chatLink);
+				}
+			}
+
+			message.thread_count = 0;
+			res.json({ message });
+		} catch (err) {
+			console.error("Error posting chat message:", err);
+			res.status(500).json({ error: "Failed to post message" });
+		}
+	});
+
+	// Edit a chat message
+	app.put("/api/chat/message/:id", async (req, res) => {
+		const currentUser = getCurrentUser(req);
+		if (!currentUser && !isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+
+		const { body } = req.body;
+		if (!body || !body.trim()) return res.status(400).json({ error: "Message body required" });
+
+		try {
+			const msg = await dbGet("SELECT * FROM chat_messages WHERE id = ?", [req.params.id]);
+			if (!msg) return res.status(404).json({ error: "Message not found" });
+			if (msg.sender !== (currentUser || "admin") && !isAdmin(req)) {
+				return res.status(403).json({ error: "Cannot edit others' messages" });
+			}
+
+			await dbRun(
+				"UPDATE chat_messages SET body = ?, edited = 1, updated_at = ? WHERE id = ?",
+				[body.trim(), new Date().toISOString(), req.params.id]
+			);
+			res.json({ success: true });
+		} catch (err) {
+			console.error("Error editing chat message:", err);
+			res.status(500).json({ error: "Failed to edit message" });
+		}
+	});
+
+	// Delete a chat message
+	app.delete("/api/chat/message/:id", async (req, res) => {
+		const currentUser = getCurrentUser(req);
+		if (!currentUser && !isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+
+		try {
+			const msg = await dbGet("SELECT * FROM chat_messages WHERE id = ?", [req.params.id]);
+			if (!msg) return res.status(404).json({ error: "Message not found" });
+			if (msg.sender !== (currentUser || "admin") && !isAdmin(req)) {
+				return res.status(403).json({ error: "Cannot delete others' messages" });
+			}
+
+			await dbRun("UPDATE chat_messages SET deleted = 1, body = '[deleted]', updated_at = ? WHERE id = ?",
+				[new Date().toISOString(), req.params.id]);
+			res.json({ success: true });
+		} catch (err) {
+			console.error("Error deleting message:", err);
+			res.status(500).json({ error: "Failed to delete message" });
+		}
+	});
+
+	// Get notifications for current user
+	app.get("/api/chat/notifications", async (req, res) => {
+		const currentUser = getCurrentUser(req);
+		if (!currentUser && !isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+		const username = currentUser || "admin";
+
+		try {
+			const notifications = await dbAll(
+				`SELECT cn.*, cm.sender, cm.body, cm.context_type, cm.context_id,
+				        CASE WHEN cm.context_type = 'task' THEN st.system_id ELSE NULL END as system_id
+				 FROM chat_notifications cn
+				 JOIN chat_messages cm ON cn.message_id = cm.id
+				 LEFT JOIN system_tasks st ON cm.context_type = 'task' AND cm.context_id = st.id
+				 WHERE cn.username = ? AND cn.is_read = 0
+				 ORDER BY cn.created_at DESC
+				 LIMIT 50`,
+				[username]
+			);
+			res.json({ notifications });
+		} catch (err) {
+			console.error("Error fetching notifications:", err);
+			res.status(500).json({ error: "Failed to fetch notifications" });
+		}
+	});
+
+	// Mark notifications as read
+	app.post("/api/chat/notifications/read", async (req, res) => {
+		const currentUser = getCurrentUser(req);
+		if (!currentUser && !isAdmin(req)) return res.status(401).json({ error: "Unauthorized" });
+		const username = currentUser || "admin";
+
+		const { context_type, context_id } = req.body;
+		try {
+			if (context_type && context_id) {
+				await dbRun(
+					"UPDATE chat_notifications SET is_read = 1 WHERE username = ? AND context_type = ? AND context_id = ?",
+					[username, context_type, Number(context_id)]
+				);
+			} else {
+				await dbRun("UPDATE chat_notifications SET is_read = 1 WHERE username = ?", [username]);
+			}
+			res.json({ success: true });
+		} catch (err) {
+			console.error("Error marking notifications:", err);
+			res.status(500).json({ error: "Failed to mark read" });
 		}
 	});
 };

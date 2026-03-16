@@ -126,9 +126,27 @@ db.serialize(() => {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE,
       password_hash TEXT,
-      must_change_password INTEGER DEFAULT 0
+      must_change_password INTEGER DEFAULT 0,
+      profile_picture TEXT
     )
   `);
+
+  // Add profile_picture column if it doesn't exist (migration for existing DBs)
+  db.all("PRAGMA table_info(users)", (err, cols) => {
+    if (err) return;
+    const hasProfilePic = cols.some(c => c.name === "profile_picture");
+    if (!hasProfilePic) {
+      db.run("ALTER TABLE users ADD COLUMN profile_picture TEXT");
+    }
+    const hasDiscordId = cols.some(c => c.name === "discord_id");
+    if (!hasDiscordId) {
+      db.run("ALTER TABLE users ADD COLUMN discord_id TEXT");
+    }
+    const hasDiscordUsername = cols.some(c => c.name === "discord_username");
+    if (!hasDiscordUsername) {
+      db.run("ALTER TABLE users ADD COLUMN discord_username TEXT");
+    }
+  });
 
   // Systems (like docs/boards for organizing tasks)
   db.run(`
@@ -343,6 +361,54 @@ db.serialize(() => {
       FOREIGN KEY (step_id) REFERENCES milestone_steps(id) ON DELETE CASCADE,
       FOREIGN KEY (task_id) REFERENCES system_tasks(id) ON DELETE CASCADE,
       UNIQUE(step_id, task_id)
+    )
+  `);
+
+  // ── Chat Messages (per-system and per-task) ──
+  db.run(`
+    CREATE TABLE IF NOT EXISTS chat_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      context_type TEXT NOT NULL,
+      context_id INTEGER NOT NULL,
+      sender TEXT NOT NULL,
+      body TEXT NOT NULL,
+      parent_id INTEGER,
+      reply_to_id INTEGER,
+      edited INTEGER DEFAULT 0,
+      deleted INTEGER DEFAULT 0,
+      attachment_filename TEXT,
+      attachment_original_name TEXT,
+      attachment_mime_type TEXT,
+      attachment_size INTEGER,
+      created_at TEXT,
+      updated_at TEXT,
+      FOREIGN KEY (parent_id) REFERENCES chat_messages(id) ON DELETE SET NULL,
+      FOREIGN KEY (reply_to_id) REFERENCES chat_messages(id) ON DELETE SET NULL
+    )
+  `);
+
+  // Add attachment columns to existing tables (safe to run multiple times)
+  const attachmentCols = [
+    "ALTER TABLE chat_messages ADD COLUMN attachment_filename TEXT",
+    "ALTER TABLE chat_messages ADD COLUMN attachment_original_name TEXT",
+    "ALTER TABLE chat_messages ADD COLUMN attachment_mime_type TEXT",
+    "ALTER TABLE chat_messages ADD COLUMN attachment_size INTEGER"
+  ];
+  attachmentCols.forEach(sql => {
+    db.run(sql, [], () => {}); // ignore errors if columns already exist
+  });
+
+  // ── Chat Notifications (@ mentions) ──
+  db.run(`
+    CREATE TABLE IF NOT EXISTS chat_notifications (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT NOT NULL,
+      message_id INTEGER NOT NULL,
+      context_type TEXT NOT NULL,
+      context_id INTEGER NOT NULL,
+      is_read INTEGER DEFAULT 0,
+      created_at TEXT,
+      FOREIGN KEY (message_id) REFERENCES chat_messages(id) ON DELETE CASCADE
     )
   `);
 });

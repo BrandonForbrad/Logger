@@ -13,6 +13,9 @@ const io = new Server(server, {
   }
 });
 
+// Make io available to route handlers via req.app.get("io")
+app.set("io", io);
+
 // Track active users per room (task or system)
 const activeUsers = new Map();
 // Track content versions for conflict resolution
@@ -218,6 +221,38 @@ io.on("connection", (socket) => {
   socket.on("attachment-delete", (data) => {
     const { room, attachmentId, username } = data;
     socket.to(room).emit("attachment-deleted", { attachmentId, username });
+  });
+  
+  // ── Chat events ──
+  socket.on("chat-typing", (data) => {
+    const { room, username } = data;
+    if (room && username) {
+      socket.to(room).emit("chat-user-typing", { username });
+    }
+  });
+  socket.on("chat-stop-typing", (data) => {
+    const { room, username } = data;
+    if (room && username) {
+      socket.to(room).emit("chat-user-stop-typing", { username });
+    }
+  });
+  socket.on("chat-new-message", (data) => {
+    const { room, message } = data;
+    if (room && message) {
+      socket.to(room).emit("chat-message-received", { message });
+    }
+  });
+  socket.on("chat-message-edited", (data) => {
+    const { room, messageId, body } = data;
+    if (room) {
+      socket.to(room).emit("chat-message-updated", { messageId, body });
+    }
+  });
+  socket.on("chat-message-deleted", (data) => {
+    const { room, messageId } = data;
+    if (room) {
+      socket.to(room).emit("chat-message-removed", { messageId });
+    }
   });
   
   // Handle disconnect

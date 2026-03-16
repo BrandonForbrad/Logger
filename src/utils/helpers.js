@@ -88,6 +88,23 @@ function getDiskUsage(callback) {
   }
 }
 
+/**
+ * Load a map of username -> profile_picture from the users table.
+ * Returns a plain object { username: "/uploads/pic.jpg" | null, ... }
+ */
+function loadProfilePictures(db) {
+  return new Promise((resolve, reject) => {
+    db.all("SELECT username, profile_picture FROM users", (err, rows) => {
+      if (err) return reject(err);
+      const map = {};
+      for (const r of (rows || [])) {
+        map[r.username] = r.profile_picture || null;
+      }
+      resolve(map);
+    });
+  });
+}
+
 module.exports = {
   escapeHtml,
   getCookies,
@@ -95,4 +112,5 @@ module.exports = {
   getDirectorySize,
   copyRecursive,
   getDiskUsage,
+  loadProfilePictures,
 };

@@ -1,5 +1,6 @@
 const path = require("path");
 const fs = require("fs");
+const { loadProfilePictures } = require("../utils/helpers");
 
 module.exports = function registerRoadmapRoutes(app, deps) {
 	const { db, isAdmin, getCurrentUser, escapeHtml, upload, views, uploadDir } = deps;
@@ -117,6 +118,7 @@ module.exports = function registerRoadmapRoutes(app, deps) {
 
 			// Get all roadmaps for the switcher
 			const allRoadmaps = await dbAll("SELECT id, name, color FROM roadmaps ORDER BY id DESC");
+			const profilePictures = await loadProfilePictures(db);
 
 			res.send(views.roadmapDetailPage({
 				roadmap,
@@ -127,6 +129,7 @@ module.exports = function registerRoadmapRoutes(app, deps) {
 				currentUser,
 				admin,
 				escapeHtml,
+				profilePictures,
 			}));
 		} catch (err) {
 			console.error("Error loading roadmap:", err);
