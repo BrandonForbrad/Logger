@@ -1,6 +1,9 @@
 const http = require("http");
 const { Server } = require("socket.io");
 const app = require("./src/app");
+const db = require("./src/config/database");
+const { startBot } = require("./src/utils/discordBot");
+const { createDbSettings } = require("./src/utils/dbSettings");
 
 const PORT = process.env.PORT || 3000;
 
@@ -296,4 +299,13 @@ io.on("connection", (socket) => {
 
 server.listen(PORT, () => {
   console.log(`Daily Logger running at http://localhost:${PORT}`);
+
+  // Start Discord bot if configured
+  const { getSetting } = createDbSettings(db);
+  getSetting("discord_bot_token", (err, token) => {
+    if (!token) return;
+    getSetting("discord_guild_id", (err2, guild) => {
+      startBot(db, token, guild);
+    });
+  });
 });

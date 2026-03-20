@@ -411,6 +411,38 @@ db.serialize(() => {
       FOREIGN KEY (message_id) REFERENCES chat_messages(id) ON DELETE CASCADE
     )
   `);
+
+  // ── Discord Voice Sessions ──
+  db.run(`
+    CREATE TABLE IF NOT EXISTS discord_voice_sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      discord_id TEXT NOT NULL,
+      username TEXT,
+      channel_id TEXT,
+      channel_name TEXT,
+      joined_at TEXT NOT NULL,
+      left_at TEXT,
+      duration_minutes REAL DEFAULT 0
+    )
+  `);
+
+  // ── Discord Message Log ──
+  db.run(`
+    CREATE TABLE IF NOT EXISTS discord_messages (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      discord_id TEXT NOT NULL,
+      username TEXT,
+      discord_username TEXT,
+      channel_id TEXT,
+      channel_name TEXT,
+      content TEXT,
+      message_id TEXT,
+      created_at TEXT NOT NULL
+    )
+  `);
+  // Add guild_name columns for Discord server name tracking
+  db.run("ALTER TABLE discord_voice_sessions ADD COLUMN guild_name TEXT", [], () => {});
+  db.run("ALTER TABLE discord_messages ADD COLUMN guild_name TEXT", [], () => {});
 });
 
 module.exports = db;

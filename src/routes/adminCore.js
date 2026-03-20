@@ -447,21 +447,27 @@ function registerAdminCoreRoutes(app, deps) {
 			getSetting("discord_client_id", (e2, clientId) => {
 				getSetting("discord_client_secret", (e3, clientSecret) => {
 					getSetting("force_discord_link", (e4, forceVal) => {
-						const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
-						const host = req.headers['x-forwarded-host'] || req.headers.host;
-						const redirectUri = `${protocol}://${host}/auth/discord/callback`;
+						getSetting("discord_guild_id", (e5, guildIdVal) => {
+							const protocol = req.headers['x-forwarded-proto'] || req.protocol || 'http';
+							const host = req.headers['x-forwarded-host'] || req.headers.host;
+							const redirectUri = `${protocol}://${host}/auth/discord/callback`;
 
-						db.all("SELECT username, discord_id, discord_username FROM users ORDER BY username ASC", (dbErr, users) => {
-							const usersWithDiscord = (users || []).filter(u => u.discord_id);
-							res.send(views.discordSetupPage({
-								botToken: token || "",
-								clientId: clientId || "",
-								clientSecret: clientSecret || "",
-								redirectUri,
-								forceDiscord: forceVal === "1",
-								message: msg,
-								usersWithDiscord,
-							}));
+							const { isRunning } = require("../utils/discordBot");
+
+							db.all("SELECT username, discord_id, discord_username FROM users ORDER BY username ASC", (dbErr, users) => {
+								const usersWithDiscord = (users || []).filter(u => u.discord_id);
+								res.send(views.discordSetupPage({
+									botToken: token || "",
+									clientId: clientId || "",
+									clientSecret: clientSecret || "",
+									redirectUri,
+									forceDiscord: forceVal === "1",
+									message: msg,
+									usersWithDiscord,
+									guildId: guildIdVal || "",
+									botRunning: isRunning(),
+								}));
+							});
 						});
 					});
 				});
@@ -529,6 +535,39 @@ function registerAdminCoreRoutes(app, deps) {
 				type: "ok",
 			});
 		});
+	});
+
+	app.post("/admin/discord/guild", (req, res) => {
+		if (!isAdmin(req)) return res.status(403).send("Forbidden");
+
+		const guildIdVal = (req.body.guild_id || "").trim();
+		setSetting("discord_guild_id", guildIdVal, (err) => {
+			if (err) return res.status(500).send("Error saving guild ID.");
+			renderDiscordPage(req, res, { text: "Guild ID saved.", type: "ok" });
+		});
+	});
+
+	app.post("/admin/discord/bot-start", (req, res) => {
+		if (!isAdmin(req)) return res.status(403).send("Forbidden");
+
+		const { startBot } = require("../utils/discordBot");
+		getSetting("discord_bot_token", (err, token) => {
+			if (!token) return renderDiscordPage(req, res, { text: "No bot token configured.", type: "error" });
+			getSetting("discord_guild_id", (err2, guild) => {
+				startBot(db, token, guild);
+				setTimeout(() => {
+					renderDiscordPage(req, res, { text: "Activity tracker started.", type: "ok" });
+				}, 1500);
+			});
+		});
+	});
+
+	app.post("/admin/discord/bot-stop", (req, res) => {
+		if (!isAdmin(req)) return res.status(403).send("Forbidden");
+
+		const { stopBot } = require("../utils/discordBot");
+		stopBot();
+		renderDiscordPage(req, res, { text: "Activity tracker stopped.", type: "ok" });
 	});
 }
 

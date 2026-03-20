@@ -114,6 +114,11 @@ function adminPanelPage() {
             <span class="label">Devlog Exporter</span>
             <span class="desc">Export daily logs by user with missed days, hours, and CSV download</span>
           </a>
+
+          <a href="/admin/discord-activity" class="pill-button">
+            <span class="label">Discord Activity</span>
+            <span class="desc">Voice channel time, message tracking, and CSV export from your Discord server</span>
+          </a>
         </div>
       </div>
     </div>
@@ -682,7 +687,7 @@ function restoringUploadedBackupPage() {
 
 // ==================== SYSTEMS VIEWS ====================
 
-function discordSetupPage({ botToken, clientId, clientSecret, redirectUri, forceDiscord, message, usersWithDiscord }) {
+function discordSetupPage({ botToken, clientId, clientSecret, redirectUri, forceDiscord, message, usersWithDiscord, guildId, botRunning }) {
   const msgHtml = message
     ? `<div class="msg ${message.type === 'error' ? 'msg-error' : 'msg-ok'}">${message.text}</div>`
     : '';
@@ -794,14 +799,14 @@ function discordSetupPage({ botToken, clientId, clientSecret, redirectUri, force
             <li>Give it a name (e.g. "Daily Logger Bot") and click <strong>Create</strong>.</li>
             <li>Go to the <strong>Bot</strong> tab on the left sidebar.</li>
             <li>Click <strong>Reset Token</strong> to generate a new bot token. Copy it and paste it below.</li>
-            <li>Under <strong>Privileged Gateway Intents</strong>, enable <strong>Server Members Intent</strong>.</li>
+            <li>Under <strong>Privileged Gateway Intents</strong>, enable <strong>Server Members Intent</strong>, <strong>Message Content Intent</strong>, and <strong>Presence Intent</strong>.</li>
             <li>
               <strong>Invite the bot to your Discord server:</strong>
               <ol style="margin-top:4px;">
                 <li>In the Developer Portal, go to <strong>Installation</strong> on the left sidebar.</li>
                 <li>Under <strong>Installation Contexts</strong>, uncheck "User Install" and keep only <strong>Guild Install</strong> checked.</li>
                 <li>Under <strong>Default Install Settings → Guild Install</strong>, click the <strong>Scopes</strong> dropdown and select <code>bot</code>.</li>
-                <li>In the <strong>Permissions</strong> dropdown that appears, select <code>Send Messages</code>.</li>
+                <li>In the <strong>Permissions</strong> dropdown that appears, select <code>Send Messages</code>, <code>Read Message History</code>, and <code>View Channels</code>.</li>
                 <li>Scroll up and copy the <strong>Install Link</strong> shown near the top of the page (labeled "Discord Provided Link").</li>
                 <li>Open that link in your browser. You'll see a prompt to select a server — choose your Discord server from the dropdown and click <strong>Continue</strong>, then <strong>Authorize</strong>.</li>
               </ol>
@@ -833,6 +838,24 @@ function discordSetupPage({ botToken, clientId, clientSecret, redirectUri, force
           </div>
           <div id="testResult"></div>
         </form>
+
+        <h2>Server (Guild) ID</h2>
+        <p class="sub">Required for voice channel tracking and message logging. Right-click your server icon in Discord → Copy Server ID.</p>
+        <form method="POST" action="/admin/discord/guild">
+          <label>Discord Server ID</label>
+          <input type="text" name="guild_id" value="${guildId || ''}" placeholder="e.g. 123456789012345678" />
+          <button type="submit">Save Guild ID</button>
+        </form>
+
+        <h2>Activity Tracker
+          <span class="badge ${botRunning ? 'badge-on' : 'badge-off'}" style="margin-left:8px;">${botRunning ? 'Running' : 'Stopped'}</span>
+        </h2>
+        <p class="sub">Tracks voice channel time and messages in your Discord server. Requires bot token + guild ID + Message Content Intent enabled.</p>
+        <div style="display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <form method="POST" action="/admin/discord/bot-start" style="margin:0;"><button type="submit">▶ Start Tracker</button></form>
+          <form method="POST" action="/admin/discord/bot-stop" style="margin:0;"><button type="submit" class="danger">⏹ Stop Tracker</button></form>
+          <a href="/admin/discord-activity" style="font-size:13px;color:#2563eb;margin-left:8px;">📊 View Activity Dashboard →</a>
+        </div>
 
         <h2>OAuth2 Settings <span style="font-size:11px;color:#6b7280;font-weight:normal;">(for auto-linking)</span></h2>
         <form method="POST" action="/admin/discord/oauth">
@@ -1330,6 +1353,196 @@ function devlogExporterPage({ users, selectedUser, startDate, endDate, rows, sum
   `;
 }
 
+function discordActivityPage({ users, selectedUser, startDate, endDate, voiceSummary, voiceDetails, messageSummary, messages, activeTab }) {
+  const esc = escHtml;
+  const tab = activeTab || 'voice';
+
+  const userOptions = users.map(u =>
+    `<option value="${esc(u.username)}" ${u.username === selectedUser ? 'selected' : ''}>${esc(u.username)}${u.discord_username ? ' (' + esc(u.discord_username) + ')' : ''}</option>`
+  ).join('');
+
+  // Voice summary table
+  let voiceSummaryHtml = '';
+  if (voiceSummary && voiceSummary.length) {
+    voiceSummaryHtml = `<table>
+      <thead><tr><th>User</th><th>Days Active</th><th>Total Minutes</th><th>Total Hours</th><th>Avg Min/Day</th></tr></thead>
+      <tbody>${voiceSummary.map(r => `<tr>
+        <td>${esc(r.username || r.discord_id)}</td>
+        <td>${r.daysActive}</td>
+        <td>${r.totalMinutes}</td>
+        <td>${r.totalHours}</td>
+        <td>${r.avgMinPerDay}</td>
+      </tr>`).join('')}</tbody>
+    </table>`;
+  } else {
+    voiceSummaryHtml = '<div class="empty-msg">No voice data for this period.</div>';
+  }
+
+  // Voice detail table (per-day, per-channel)
+  let voiceDetailHtml = '';
+  if (voiceDetails && voiceDetails.length) {
+    voiceDetailHtml = `<h3>Daily Breakdown</h3><table>
+      <thead><tr><th>Date</th><th>User</th><th>Server</th><th>Channel</th><th>Sessions</th><th>Minutes</th></tr></thead>
+      <tbody>${voiceDetails.map(r => `<tr>
+        <td>${esc(r.date)}</td>
+        <td>${esc(r.username || r.discord_id)}</td>
+        <td>${esc(r.guild_name || '')}</td>
+        <td>#${esc(r.channel_name)}</td>
+        <td>${r.sessions}</td>
+        <td>${r.minutes}</td>
+      </tr>`).join('')}</tbody>
+    </table>`;
+  }
+
+  // Message summary table
+  let msgSummaryHtml = '';
+  if (messageSummary && messageSummary.length) {
+    msgSummaryHtml = `<table>
+      <thead><tr><th>User</th><th>Messages</th><th>Channels</th></tr></thead>
+      <tbody>${messageSummary.map(r => `<tr>
+        <td>${esc(r.username || r.discord_username || r.discord_id)}</td>
+        <td>${r.count}</td>
+        <td>${esc(r.channels)}</td>
+      </tr>`).join('')}</tbody>
+    </table>`;
+  } else {
+    msgSummaryHtml = '<div class="empty-msg">No messages for this period.</div>';
+  }
+
+  // Messages list
+  let messagesHtml = '';
+  if (messages && messages.length) {
+    messagesHtml = `<h3>Messages</h3><table>
+      <thead><tr><th>Time</th><th>User</th><th>Server</th><th>Channel</th><th>Content</th></tr></thead>
+      <tbody>${messages.map(r => `<tr>
+        <td style="white-space:nowrap;">${esc(r.created_at)}</td>
+        <td>${esc(r.username || r.discord_username || r.discord_id)}</td>
+        <td>${esc(r.guild_name || '')}</td>
+        <td>#${esc(r.channel_name)}</td>
+        <td class="preview">${esc((r.content || '').substring(0, 200))}</td>
+      </tr>`).join('')}</tbody>
+    </table>`;
+  }
+
+  return `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <title>Discord Activity</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin:0; background:#f3f4f6; }
+      .shell { min-height:100vh; display:flex; align-items:flex-start; justify-content:center; padding:24px 12px; }
+      .card { background:white; padding:22px 24px; border-radius:16px; border:1px solid #e5e7eb; box-shadow:0 10px 25px rgba(15,23,42,0.08); width:100%; max-width:1000px; }
+      h1 { margin:0 0 4px; font-size:20px; }
+      h2 { margin:18px 0 8px; font-size:16px; border-bottom:1px solid #e5e7eb; padding-bottom:6px; }
+      h3 { margin:14px 0 6px; font-size:14px; color:#374151; }
+      p.sub { margin:0 0 14px; font-size:13px; color:#6b7280; }
+      a { text-decoration:none; color:#2563eb; }
+      a:hover { text-decoration:underline; }
+
+      .filter-bar { display:flex; flex-wrap:wrap; gap:10px; align-items:end; margin-bottom:16px; padding:12px; background:#f9fafb; border-radius:10px; border:1px solid #e5e7eb; }
+      .filter-group { display:flex; flex-direction:column; gap:3px; }
+      .filter-group label { font-size:11px; font-weight:600; color:#6b7280; text-transform:uppercase; letter-spacing:.5px; }
+      .filter-group select, .filter-group input[type="date"] {
+        padding:6px 10px; border:1px solid #d1d5db; border-radius:8px; font-size:13px; background:white;
+      }
+      .btn { padding:7px 16px; border:none; border-radius:8px; font-size:13px; font-weight:500; cursor:pointer; }
+      .btn-primary { background:#2563eb; color:white; }
+      .btn-primary:hover { background:#1d4ed8; }
+      .btn-green { background:#16a34a; color:white; }
+      .btn-green:hover { background:#15803d; }
+
+      .tab-bar { display:flex; gap:4px; margin-bottom:14px; }
+      .tab-btn { padding:7px 16px; border:1px solid #d1d5db; border-radius:999px; background:white; font-size:13px; cursor:pointer; font-weight:500; }
+      .tab-btn.active { background:#5865F2; color:white; border-color:#5865F2; }
+
+      .summary-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(130px,1fr)); gap:10px; margin-bottom:16px; }
+      .summary-card { background:#f9fafb; border:1px solid #e5e7eb; border-radius:10px; padding:10px 14px; text-align:center; }
+      .summary-card .num { font-size:22px; font-weight:700; color:#111827; }
+      .summary-card .lbl { font-size:11px; color:#6b7280; margin-top:2px; }
+
+      table { width:100%; border-collapse:collapse; font-size:13px; }
+      thead { background:#f9fafb; }
+      th, td { padding:8px 10px; text-align:left; border-bottom:1px solid #e5e7eb; }
+      th { font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:#6b7280; font-weight:600; }
+      .preview { max-width:400px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#374151; font-size:12px; }
+      .empty-msg { text-align:center; color:#9ca3af; padding:32px 0; font-size:14px; }
+      .export-bar { margin-top:14px; display:flex; gap:10px; align-items:center; }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="card">
+        <div style="font-size:12px; margin-bottom:8px;"><a href="/admin/discord">\u2b05 Back to Discord Setup</a> &nbsp;|&nbsp; <a href="/admin">Admin Panel</a></div>
+        <h1>\ud83d\udcca Discord Activity Dashboard</h1>
+        <p class="sub">Track voice channel time and message activity from your Discord server.</p>
+
+        <form class="filter-bar" method="GET" action="/admin/discord-activity">
+          <div class="filter-group">
+            <label>User</label>
+            <select name="user">
+              <option value="">All Users</option>
+              ${userOptions}
+            </select>
+          </div>
+          <div class="filter-group">
+            <label>Start Date</label>
+            <input type="date" name="start" value="${esc(startDate)}" />
+          </div>
+          <div class="filter-group">
+            <label>End Date</label>
+            <input type="date" name="end" value="${esc(endDate)}" />
+          </div>
+          <input type="hidden" name="tab" value="${esc(tab)}" id="tabInput" />
+          <button type="submit" class="btn btn-primary">View</button>
+        </form>
+
+        <div class="tab-bar">
+          <button class="tab-btn ${tab === 'voice' ? 'active' : ''}" onclick="switchTab('voice')">🎙 Voice Activity</button>
+          <button class="tab-btn ${tab === 'messages' ? 'active' : ''}" onclick="switchTab('messages')">💬 Messages</button>
+        </div>
+
+        <div id="voicePanel" style="display:${tab === 'voice' ? 'block' : 'none'};">
+          <h2>\ud83c\udf99\ufe0f Voice Channel Time</h2>
+          ${voiceSummaryHtml}
+          ${voiceDetailHtml}
+          ${voiceSummary && voiceSummary.length ? `
+          <div class="export-bar">
+            <button class="btn btn-green" onclick="exportCsv('voice')">📥 Export Voice CSV</button>
+          </div>` : ''}
+        </div>
+
+        <div id="messagesPanel" style="display:${tab === 'messages' ? 'block' : 'none'};">
+          <h2>\ud83d\udcac Message Activity</h2>
+          ${msgSummaryHtml}
+          ${messagesHtml}
+          ${messageSummary && messageSummary.length ? `
+          <div class="export-bar">
+            <button class="btn btn-green" onclick="exportCsv('messages')">📥 Export Messages CSV</button>
+          </div>` : ''}
+        </div>
+      </div>
+    </div>
+    <script>
+      function switchTab(t) {
+        document.getElementById('tabInput').value = t;
+        document.getElementById('voicePanel').style.display = t === 'voice' ? 'block' : 'none';
+        document.getElementById('messagesPanel').style.display = t === 'messages' ? 'block' : 'none';
+        document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+        event.target.classList.add('active');
+      }
+      function exportCsv(type) {
+        var params = new URLSearchParams(window.location.search);
+        params.set('format', 'csv');
+        params.set('tab', type);
+        window.location.href = '/admin/discord-activity?' + params.toString();
+      }
+    </script>
+  </body>
+  </html>
+  `;
+}
+
 module.exports = {
   adminPanelPage,
   adminChangePasswordPage,
@@ -1342,4 +1555,5 @@ module.exports = {
   discordSetupPage,
   storageCleanupPage,
   devlogExporterPage,
+  discordActivityPage,
 };

@@ -770,4 +770,200 @@ module.exports = function registerAdminRoutes(app, deps) {
 			);
 		});
 	});
+
+	// ---------- Discord Activity Dashboard ----------
+	app.get("/admin/discord-activity", (req, res) => {
+		if (!isAdmin(req)) return res.status(403).send("Forbidden");
+
+		const selectedUser = req.query.user || "";
+		const startDate = req.query.start || "";
+		const endDate = req.query.end || "";
+		const format = req.query.format || "";
+		const activeTab = req.query.tab || "voice";
+
+		// Get users with discord linked
+		db.all("SELECT username, discord_id, discord_username FROM users WHERE discord_id IS NOT NULL ORDER BY username", [], (err, userRows) => {
+			const users = (userRows || []);
+
+			if (!startDate || !endDate) {
+				return res.send(
+					views.discordActivityPage({
+						users,
+						selectedUser,
+						startDate,
+						endDate,
+						voiceSummary: null,
+						voiceDetails: null,
+						messageSummary: null,
+						messages: null,
+						activeTab,
+					})
+				);
+			}
+
+			// Build user filter — match by username OR discord_id
+			let userDiscordIds = [];
+			if (selectedUser) {
+				const match = users.find((u) => u.username === selectedUser);
+				if (match) userDiscordIds = [match.discord_id];
+			}
+
+			// ---------- Voice queries ----------
+			const voiceParams = [startDate + "T00:00:00", endDate + "T23:59:59"];
+			let voiceUserClause = "";
+			if (selectedUser && userDiscordIds.length) {
+				voiceUserClause = " AND v.discord_id = ?";
+				voiceParams.push(userDiscordIds[0]);
+			} else if (selectedUser) {
+				voiceUserClause = " AND v.username = ?";
+				voiceParams.push(selectedUser);
+			}
+
+			// Voice summary per user
+			db.all(
+				`SELECT COALESCE(v.username, v.discord_id) AS uname, v.discord_id,
+				        COUNT(DISTINCT substr(v.joined_at, 1, 10)) AS days_active,
+				        ROUND(SUM(v.duration_minutes), 2) AS total_minutes
+				 FROM discord_voice_sessions v
+				 WHERE v.joined_at >= ? AND v.joined_at <= ?${voiceUserClause}
+				 GROUP BY v.discord_id
+				 ORDER BY total_minutes DESC`,
+				voiceParams,
+				(err2, voiceSumRows) => {
+					const voiceSummary = (voiceSumRows || []).map((r) => ({
+						username: r.uname,
+						discord_id: r.discord_id,
+						daysActive: r.days_active,
+						totalMinutes: r.total_minutes.toFixed(1),
+						totalHours: (r.total_minutes / 60).toFixed(2),
+						avgMinPerDay: r.days_active ? (r.total_minutes / r.days_active).toFixed(1) : "0",
+					}));
+
+					// Voice detail per day+channel
+					const detailParams = [startDate + "T00:00:00", endDate + "T23:59:59"];
+					let detailUserClause = voiceUserClause;
+					if (selectedUser && userDiscordIds.length) detailParams.push(userDiscordIds[0]);
+					else if (selectedUser) detailParams.push(selectedUser);
+
+					db.all(
+						`SELECT substr(v.joined_at, 1, 10) AS day, COALESCE(v.username, v.discord_id) AS uname,
+						        v.channel_name, v.guild_name, COUNT(*) AS sessions,
+						        ROUND(SUM(v.duration_minutes), 1) AS minutes
+						 FROM discord_voice_sessions v
+					 WHERE v.joined_at >= ? AND v.joined_at <= ?${detailUserClause}
+						 GROUP BY day, v.discord_id, v.channel_name
+						 ORDER BY day DESC, minutes DESC`,
+						detailParams,
+						(err3, voiceDetailRows) => {
+							const voiceDetails = (voiceDetailRows || []).map((r) => ({
+								date: r.day,
+								username: r.uname,
+								discord_id: r.discord_id,
+								channel_name: r.channel_name || "Unknown",
+								guild_name: r.guild_name || "",
+								sessions: r.sessions,
+								minutes: r.minutes,
+							}));
+
+							// ---------- Message queries ----------
+							const msgParams = [startDate + "T00:00:00", endDate + "T23:59:59"];
+							let msgUserClause = "";
+							if (selectedUser && userDiscordIds.length) {
+								msgUserClause = " AND m.discord_id = ?";
+								msgParams.push(userDiscordIds[0]);
+							} else if (selectedUser) {
+								msgUserClause = " AND m.username = ?";
+								msgParams.push(selectedUser);
+							}
+
+							// Message summary per user
+							db.all(
+								`SELECT COALESCE(m.username, m.discord_username, m.discord_id) AS uname, m.discord_id,
+								        COUNT(*) AS msg_count,
+								        GROUP_CONCAT(DISTINCT m.channel_name) AS channels
+								 FROM discord_messages m
+								 WHERE m.created_at >= ? AND m.created_at <= ?${msgUserClause}
+								 GROUP BY m.discord_id
+								 ORDER BY msg_count DESC`,
+								msgParams,
+								(err4, msgSumRows) => {
+									const messageSummary = (msgSumRows || []).map((r) => ({
+										username: r.uname,
+										discord_id: r.discord_id,
+										count: r.msg_count,
+										channels: r.channels || "",
+									}));
+
+									// Actual messages (limit to 500)
+									const msgsParams = [startDate + "T00:00:00", endDate + "T23:59:59"];
+									let msgsUserClause = msgUserClause;
+									if (selectedUser && userDiscordIds.length) msgsParams.push(userDiscordIds[0]);
+									else if (selectedUser) msgsParams.push(selectedUser);
+
+									db.all(
+										`SELECT m.created_at, COALESCE(m.username, m.discord_username, m.discord_id) AS uname,
+								        m.channel_name, m.content, m.discord_id, m.discord_username, m.guild_name
+										 FROM discord_messages m
+										 WHERE m.created_at >= ? AND m.created_at <= ?${msgsUserClause}
+										 ORDER BY m.created_at DESC
+										 LIMIT 500`,
+										msgsParams,
+										(err5, msgRows) => {
+											const messages = (msgRows || []).map((r) => ({
+												created_at: r.created_at ? r.created_at.replace("T", " ").substring(0, 19) : "",
+												username: r.uname,
+												discord_username: r.discord_username,
+												discord_id: r.discord_id,
+												channel_name: r.channel_name || "unknown",
+												guild_name: r.guild_name || "",
+												content: r.content || "",
+											}));
+
+											// CSV export
+											if (format === "csv") {
+												if (activeTab === "voice") {
+													res.setHeader("Content-Type", "text/csv; charset=utf-8");
+													res.setHeader("Content-Disposition", 'attachment; filename="discord-voice-' + startDate + '-to-' + endDate + '.csv"');
+													let csv = "Date,User,Server,Channel,Sessions,Minutes\n";
+													voiceDetails.forEach((r) => {
+														const server = (r.guild_name || "").replace(/"/g, '""');
+														csv += r.date + "," + r.username + ',"' + server + '",#' + r.channel_name + "," + r.sessions + "," + r.minutes + "\n";
+													});
+													return res.send(csv);
+												} else {
+													res.setHeader("Content-Type", "text/csv; charset=utf-8");
+													res.setHeader("Content-Disposition", 'attachment; filename="discord-messages-' + startDate + '-to-' + endDate + '.csv"');
+													let csv = "Time,User,Server,Channel,Content\n";
+													messages.forEach((r) => {
+														const content = r.content.replace(/"/g, '""').replace(/[\r\n]+/g, ' ');
+														const server = (r.guild_name || "").replace(/"/g, '""');
+														csv += r.created_at + "," + r.username + ',"' + server + '",#' + r.channel_name + ',"' + content + '"\n';
+													});
+													return res.send(csv);
+												}
+											}
+
+											res.send(
+												views.discordActivityPage({
+													users,
+													selectedUser,
+													startDate,
+													endDate,
+													voiceSummary,
+													voiceDetails,
+													messageSummary,
+													messages,
+													activeTab,
+												})
+											);
+										}
+									);
+								}
+							);
+						}
+					);
+				}
+			);
+		});
+	});
 };
