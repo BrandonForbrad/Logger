@@ -305,12 +305,14 @@ function systemsBaseCss() {
       gap: 6px;
       font-size: 12px;
       color: #80848e;
-      margin-bottom: 2px;
+      margin-bottom: 4px;
       cursor: pointer;
+      flex-wrap: wrap;
     }
     .chat-msg-reply-ref:hover { color: #dbdee1; }
     .chat-msg-reply-ref .reply-line { width: 2px; height: 12px; background: #80848e; border-radius: 1px; }
     .chat-msg-reply-ref .reply-sender { font-weight: 600; color: #b5bac1; }
+    .chat-msg-reply-ref .reply-text { overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; word-break: break-word; white-space: normal; max-width: 100%; }
     .chat-msg-actions {
       position: absolute;
       right: 12px;
@@ -2953,7 +2955,7 @@ function systemDetailPage(opts) {
         var html = '';
         // Reply reference
         if (msg.reply_sender) {
-          html += '<div class="chat-msg-reply-ref" onclick="scrollToMsg(' + (msg.reply_msg_id||'') + ')"><span class="reply-line"></span>' + _av(msg.reply_sender, msg.reply_sender, 16) + ' <span class="reply-sender">' + escapeHtml(msg.reply_sender) + '</span> <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;display:inline-block;">' + escapeHtml((msg.reply_body||'').substring(0,80)) + '</span></div>';
+          html += '<div class="chat-msg-reply-ref" onclick="scrollToMsg(' + (msg.reply_msg_id||'') + ')"><span class="reply-line"></span>' + _av(msg.reply_sender, msg.reply_sender, 16) + ' <span class="reply-sender">' + escapeHtml(msg.reply_sender) + '</span> <span class="reply-text">' + escapeHtml((msg.reply_body||'').substring(0,120)) + '</span></div>';
         }
 
         if (isFirstInGroup) {
@@ -5499,7 +5501,7 @@ function taskDetailPage(opts) {
 
         var html = '';
         if (msg.reply_sender) {
-          html += '<div class="chat-msg-reply-ref" onclick="scrollToMsg(' + (msg.reply_msg_id||'') + ')"><span class="reply-line"></span>' + _av(msg.reply_sender, msg.reply_sender, 16) + ' <span class="reply-sender">' + escapeHtml(msg.reply_sender) + '</span> <span style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:200px;display:inline-block;">' + escapeHtml((msg.reply_body||'').substring(0,80)) + '</span></div>';
+          html += '<div class="chat-msg-reply-ref" onclick="scrollToMsg(' + (msg.reply_msg_id||'') + ')"><span class="reply-line"></span>' + _av(msg.reply_sender, msg.reply_sender, 16) + ' <span class="reply-sender">' + escapeHtml(msg.reply_sender) + '</span> <span class="reply-text">' + escapeHtml((msg.reply_body||'').substring(0,120)) + '</span></div>';
         }
 
         if (isFirstInGroup) {

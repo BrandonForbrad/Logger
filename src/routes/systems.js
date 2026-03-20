@@ -1317,6 +1317,28 @@ module.exports = function registerSystemsRoutes(app, deps) {
 					message.reply_sender = rm.sender;
 					message.reply_body = rm.body;
 					message.reply_msg_id = rm.id;
+
+					// Notify original message author via Discord when someone replies to them
+					if (rm.sender !== sender) {
+						let contextName = "";
+						if (contextType === "system") {
+							const sys = await dbGet("SELECT name FROM systems WHERE id = ?", [Number(contextId)]);
+							contextName = sys ? sys.name : "a system";
+						} else {
+							const task = await dbGet("SELECT title FROM system_tasks WHERE id = ?", [Number(contextId)]);
+							contextName = task ? task.title : "a task";
+						}
+						const replyPreview = sanitizedBody.length > 100 ? sanitizedBody.substring(0, 100) + "..." : sanitizedBody;
+						const baseUrl = req.protocol + '://' + req.get('host');
+						let chatLink;
+						if (contextType === 'system') {
+							chatLink = baseUrl + '/systems/' + contextId + '?chatMsg=' + result.lastID;
+						} else {
+							const taskRow = await dbGet('SELECT system_id FROM system_tasks WHERE id = ?', [Number(contextId)]);
+							chatLink = baseUrl + '/systems/' + (taskRow ? taskRow.system_id : 0) + '/tasks/' + contextId + '?chatMsg=' + result.lastID;
+						}
+						notifyDiscord(rm.sender, `**${sender}** replied to your message in **${contextName}** (${contextType}):\n> ${replyPreview}`, chatLink);
+					}
 				}
 			}
 

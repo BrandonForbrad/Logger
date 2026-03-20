@@ -104,6 +104,16 @@ function adminPanelPage() {
             <span class="label">Discord Integration</span>
             <span class="desc">Set up Discord bot for DM notifications on @mentions</span>
           </a>
+
+          <a href="/admin/storage" class="pill-button">
+            <span class="label">Storage Cleanup</span>
+            <span class="desc">Manage files, clear old attachments, and export to Google Drive</span>
+          </a>
+
+          <a href="/admin/devlog-export" class="pill-button">
+            <span class="label">Devlog Exporter</span>
+            <span class="desc">Export daily logs by user with missed days, hours, and CSV download</span>
+          </a>
         </div>
       </div>
     </div>
@@ -878,6 +888,448 @@ function discordSetupPage({ botToken, clientId, clientSecret, redirectUri, force
 }
 
 
+function storageCleanupPage({ totalUploadsSize, totalUploadsCount, systemFiles, taskFiles, chatFiles, orphanFiles, logMediaFiles, roadmapFiles }) {
+  return `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <title>Storage Cleanup</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin:0; background:#f3f4f6; }
+      .shell { min-height:100vh; display:flex; align-items:flex-start; justify-content:center; padding:24px 12px; }
+      .card { background:white; padding:22px 24px; border-radius:16px; border:1px solid #e5e7eb; box-shadow:0 10px 25px rgba(15,23,42,0.08); width:100%; max-width:960px; }
+      h1 { margin:0 0 4px; font-size:20px; }
+      h2 { margin:20px 0 8px; font-size:16px; border-bottom:1px solid #e5e7eb; padding-bottom:6px; }
+      p.sub { margin:0 0 14px; font-size:13px; color:#6b7280; }
+      a { text-decoration:none; color:#2563eb; }
+      a:hover { text-decoration:underline; }
+      .top-link { margin-bottom:10px; font-size:12px; }
+
+      .summary-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(130px,1fr)); gap:10px; margin-bottom:18px; }
+      .summary-card { background:#f9fafb; border:1px solid #e5e7eb; border-radius:10px; padding:12px; text-align:center; }
+      .summary-card .num { font-size:22px; font-weight:700; color:#111827; }
+      .summary-card .lbl { font-size:11px; color:#6b7280; margin-top:2px; }
+
+      .file-section { margin-bottom:16px; }
+      .file-section-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:6px; }
+      .file-section-header h3 { margin:0; font-size:14px; }
+
+      table { width:100%; border-collapse:collapse; font-size:13px; }
+      th { text-align:left; padding:6px 8px; background:#f9fafb; border-bottom:2px solid #e5e7eb; font-size:12px; color:#6b7280; }
+      td { padding:6px 8px; border-bottom:1px solid #f3f4f6; vertical-align:middle; }
+      tr:hover { background:#f9fafb; }
+      .fname { max-width:200px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+      .fsize { white-space:nowrap; color:#6b7280; }
+      .fdate { white-space:nowrap; color:#6b7280; font-size:12px; }
+      .ctx-badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:500; }
+      .ctx-system { background:#dbeafe; color:#1e40af; }
+      .ctx-task { background:#dcfce7; color:#166534; }
+      .ctx-chat { background:#fef3c7; color:#92400e; }
+      .ctx-orphan { background:#fee2e2; color:#991b1b; }
+      .ctx-log { background:#e0e7ff; color:#3730a3; }
+      .ctx-roadmap { background:#f3e8ff; color:#6b21a8; }
+      .completed-badge { background:#dcfce7; color:#166534; font-size:11px; padding:1px 6px; border-radius:999px; margin-left:4px; }
+
+      .btn { border-radius:999px; border:none; padding:5px 12px; font-size:12px; cursor:pointer; font-weight:500; }
+      .btn-danger { background:#fee2e2; color:#991b1b; }
+      .btn-danger:hover { background:#fecaca; }
+      .btn-primary { background:#dbeafe; color:#1e40af; }
+      .btn-primary:hover { background:#bfdbfe; }
+      .btn-green { background:#dcfce7; color:#166534; }
+      .btn-green:hover { background:#bbf7d0; }
+
+      .bulk-bar { display:flex; gap:8px; align-items:center; margin:10px 0; padding:8px 12px; background:#f9fafb; border-radius:10px; border:1px solid #e5e7eb; }
+      .bulk-bar span { font-size:12px; color:#6b7280; }
+
+      .tab-bar { display:flex; gap:4px; margin-bottom:14px; flex-wrap:wrap; }
+      .tab-btn { padding:6px 14px; border-radius:999px; border:1px solid #d1d5db; background:#f9fafb; font-size:13px; cursor:pointer; font-weight:500; color:#374151; }
+      .tab-btn.active { background:#2563eb; color:white; border-color:#2563eb; }
+      .tab-content { display:none; }
+      .tab-content.active { display:block; }
+
+      .select-all-wrap { font-size:12px; color:#6b7280; margin-bottom:6px; }
+      .select-all-wrap label { cursor:pointer; }
+
+      .gdrive-section { margin-top:14px; padding:14px; background:#f0fdf4; border:1px solid #bbf7d0; border-radius:10px; }
+      .gdrive-section h3 { margin:0 0 6px; font-size:14px; color:#166534; }
+      .gdrive-section p { font-size:12px; color:#6b7280; margin:0 0 8px; }
+
+      .empty-msg { padding:20px; text-align:center; color:#9ca3af; font-size:13px; }
+
+      .toast { position:fixed; bottom:20px; right:20px; background:#111827; color:white; padding:10px 18px; border-radius:10px; font-size:13px; z-index:9999; display:none; }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="card">
+        <div class="top-link"><a href="/admin/panel">⬅ Back to Admin Panel</a></div>
+        <h1>Storage Cleanup</h1>
+        <p class="sub">Manage uploaded files across systems, tasks, and chat. Delete unused files or export to Google Drive.</p>
+
+        <div class="summary-grid">
+          <div class="summary-card">
+            <div class="num">${totalUploadsCount}</div>
+            <div class="lbl">Total Files</div>
+          </div>
+          <div class="summary-card">
+            <div class="num">${totalUploadsSize}</div>
+            <div class="lbl">Total Size</div>
+          </div>
+          <div class="summary-card">
+            <div class="num">${systemFiles.length}</div>
+            <div class="lbl">System Files</div>
+          </div>
+          <div class="summary-card">
+            <div class="num">${taskFiles.length}</div>
+            <div class="lbl">Task Files</div>
+          </div>
+          <div class="summary-card">
+            <div class="num">${chatFiles.length}</div>
+            <div class="lbl">Chat Files</div>
+          </div>
+          <div class="summary-card">
+            <div class="num">${roadmapFiles.length}</div>
+            <div class="lbl">Roadmap Files</div>
+          </div>
+          <div class="summary-card">
+            <div class="num">${orphanFiles.length}</div>
+            <div class="lbl">Orphan Files</div>
+          </div>
+        </div>
+
+        <div class="bulk-bar">
+          <span id="selectedCount">0 selected</span>
+          <button class="btn btn-danger" onclick="bulkDelete()">🗑 Delete Selected</button>
+          <button class="btn btn-green" onclick="bulkDownload()">📥 Download Selected</button>
+        </div>
+
+        <div class="tab-bar">
+          <button class="tab-btn active" onclick="switchTab('all')">All</button>
+          <button class="tab-btn" onclick="switchTab('system')">Systems</button>
+          <button class="tab-btn" onclick="switchTab('task')">Tasks</button>
+          <button class="tab-btn" onclick="switchTab('chat')">Chat</button>
+          <button class="tab-btn" onclick="switchTab('log')">Log Media</button>
+          <button class="tab-btn" onclick="switchTab('roadmap')">Roadmaps</button>
+          <button class="tab-btn" onclick="switchTab('orphan')">Orphans</button>
+          <button class="tab-btn" onclick="switchTab('completed')">Completed Tasks</button>
+        </div>
+
+        <div class="select-all-wrap"><label><input type="checkbox" id="selectAll" onchange="toggleSelectAll()"> Select all visible</label></div>
+
+        <div id="fileTableWrap">
+          ${buildFileTable([...systemFiles, ...taskFiles, ...chatFiles, ...logMediaFiles, ...roadmapFiles, ...orphanFiles])}
+        </div>
+
+        <div class="gdrive-section">
+          <h3>📁 Export to Google Drive</h3>
+          <p>Download selected files as a ZIP archive, then upload to your Google Drive.</p>
+          <button class="btn btn-green" onclick="bulkDownload()">📥 Download Selected as ZIP</button>
+          <a href="https://drive.google.com/drive/my-drive" target="_blank" class="btn btn-primary" style="display:inline-block;margin-left:6px;text-decoration:none;">Open Google Drive ↗</a>
+        </div>
+      </div>
+    </div>
+    <div class="toast" id="toast"></div>
+    <script>
+      var allFiles = ${JSON.stringify([...systemFiles, ...taskFiles, ...chatFiles, ...logMediaFiles, ...roadmapFiles, ...orphanFiles])};
+      var currentTab = 'all';
+
+      function switchTab(tab) {
+        currentTab = tab;
+        document.querySelectorAll('.tab-btn').forEach(function(b) { b.classList.remove('active'); });
+        event.target.classList.add('active');
+        var filtered;
+        if (tab === 'all') filtered = allFiles;
+        else if (tab === 'completed') filtered = allFiles.filter(function(f) { return f.taskCompleted; });
+        else filtered = allFiles.filter(function(f) { return f.category === tab; });
+        document.getElementById('fileTableWrap').innerHTML = buildTable(filtered);
+        document.getElementById('selectAll').checked = false;
+        updateCount();
+      }
+
+      function buildTable(files) {
+        if (!files.length) return '<div class="empty-msg">No files in this category.</div>';
+        var h = '<table><thead><tr><th style="width:30px;"></th><th>File</th><th>Context</th><th>Size</th><th>Uploaded</th><th>By</th><th></th></tr></thead><tbody>';
+        files.forEach(function(f) {
+          var catClass = 'ctx-' + f.category;
+          var catLabel = f.category.charAt(0).toUpperCase() + f.category.slice(1);
+          var ctx = f.contextLabel || '';
+          var completed = f.taskCompleted ? '<span class="completed-badge">✓ Done</span>' : '';
+          h += '<tr data-file-id="' + f.id + '" data-category="' + f.category + '">';
+          h += '<td><input type="checkbox" class="file-cb" value="' + f.id + ':' + f.category + '" onchange="updateCount()"></td>';
+          h += '<td class="fname" title="' + esc(f.originalName) + '"><a href="/uploads/' + esc(f.filename) + '" target="_blank">' + esc(f.originalName) + '</a></td>';
+          h += '<td><span class="ctx-badge ' + catClass + '">' + catLabel + '</span> ' + esc(ctx) + completed + '</td>';
+          h += '<td class="fsize">' + f.sizeFormatted + '</td>';
+          h += '<td class="fdate">' + (f.uploadedAt || '') + '</td>';
+          h += '<td>' + esc(f.uploadedBy || '') + '</td>';
+          h += '<td><button class="btn btn-danger" onclick="deleteSingle(\\'' + f.id + '\\',\\'' + f.category + '\\')">🗑</button></td>';
+          h += '</tr>';
+        });
+        h += '</tbody></table>';
+        return h;
+      }
+
+      function esc(s) { if (!s) return ''; var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+
+      function getSelected() {
+        var checked = document.querySelectorAll('.file-cb:checked');
+        var items = [];
+        checked.forEach(function(cb) {
+          var parts = cb.value.split(':');
+          items.push({ id: parts[0], category: parts[1] });
+        });
+        return items;
+      }
+
+      function updateCount() {
+        var sel = getSelected();
+        document.getElementById('selectedCount').textContent = sel.length + ' selected';
+      }
+
+      function toggleSelectAll() {
+        var val = document.getElementById('selectAll').checked;
+        document.querySelectorAll('.file-cb').forEach(function(cb) { cb.checked = val; });
+        updateCount();
+      }
+
+      function showToast(msg) {
+        var t = document.getElementById('toast');
+        t.textContent = msg;
+        t.style.display = 'block';
+        setTimeout(function() { t.style.display = 'none'; }, 3000);
+      }
+
+      async function deleteSingle(id, category) {
+        if (!confirm('Delete this file permanently?')) return;
+        var r = await fetch('/admin/storage/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ files: [{ id: id, category: category }] })
+        });
+        var data = await r.json();
+        if (data.success) {
+          allFiles = allFiles.filter(function(f) { return !(f.id == id && f.category === category); });
+          switchTab(currentTab);
+          showToast('File deleted');
+        } else {
+          alert(data.error || 'Delete failed');
+        }
+      }
+
+      async function bulkDelete() {
+        var sel = getSelected();
+        if (!sel.length) return alert('No files selected');
+        if (!confirm('Delete ' + sel.length + ' file(s) permanently? This cannot be undone.')) return;
+        var r = await fetch('/admin/storage/delete', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ files: sel })
+        });
+        var data = await r.json();
+        if (data.success) {
+          var deleted = new Set(data.deletedIds || []);
+          allFiles = allFiles.filter(function(f) { return !deleted.has(f.id + ':' + f.category); });
+          switchTab(currentTab);
+          showToast(data.count + ' file(s) deleted');
+        } else {
+          alert(data.error || 'Delete failed');
+        }
+      }
+
+      async function bulkDownload() {
+        var sel = getSelected();
+        if (!sel.length) return alert('Select files to download first');
+        showToast('Preparing ZIP download...');
+        var r = await fetch('/admin/storage/download-zip', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ files: sel })
+        });
+        if (!r.ok) { alert('Download failed'); return; }
+        var blob = await r.blob();
+        var url = URL.createObjectURL(blob);
+        var a = document.createElement('a');
+        a.href = url;
+        a.download = 'storage-export-' + new Date().toISOString().slice(0,10) + '.zip';
+        a.click();
+        URL.revokeObjectURL(url);
+        showToast('Download started');
+      }
+    </script>
+  </body>
+  </html>
+  `;
+}
+
+function buildFileTable(files) {
+  if (!files.length) return '<div class="empty-msg">No files found.</div>';
+  var h = '<table><thead><tr><th style="width:30px;"></th><th>File</th><th>Context</th><th>Size</th><th>Uploaded</th><th>By</th><th></th></tr></thead><tbody>';
+  files.forEach(function(f) {
+    var catClass = 'ctx-' + f.category;
+    var catLabel = f.category.charAt(0).toUpperCase() + f.category.slice(1);
+    var ctx = f.contextLabel || '';
+    var completed = f.taskCompleted ? '<span class="completed-badge">✓ Done</span>' : '';
+    h += '<tr data-file-id="' + f.id + '" data-category="' + f.category + '">';
+    h += '<td><input type="checkbox" class="file-cb" value="' + f.id + ':' + f.category + '" onchange="updateCount()"></td>';
+    h += '<td class="fname" title="' + escHtml(f.originalName) + '"><a href="/uploads/' + encodeURIComponent(f.filename) + '" target="_blank">' + escHtml(f.originalName) + '</a></td>';
+    h += '<td><span class="ctx-badge ' + catClass + '">' + catLabel + '</span> ' + escHtml(ctx) + completed + '</td>';
+    h += '<td class="fsize">' + f.sizeFormatted + '</td>';
+    h += '<td class="fdate">' + (f.uploadedAt || '') + '</td>';
+    h += '<td>' + escHtml(f.uploadedBy || '') + '</td>';
+    h += '<td><button class="btn btn-danger" onclick="deleteSingle(\'' + f.id + '\',\'' + f.category + '\')">🗑</button></td>';
+    h += '</tr>';
+  });
+  h += '</tbody></table>';
+  return h;
+}
+
+function escHtml(s) {
+  if (!s) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+
+function devlogExporterPage({ users, selectedUser, startDate, endDate, rows, summary }) {
+  const userOptions = users.map(u =>
+    `<option value="${escHtml(u)}" ${u === selectedUser ? 'selected' : ''}>${escHtml(u)}</option>`
+  ).join('');
+
+  let tableHtml = '';
+  if (rows && rows.length) {
+    tableHtml = `<table>
+      <thead><tr><th>Date</th><th>Hours</th><th>Status</th><th>Preview</th></tr></thead>
+      <tbody>${rows.map(r => {
+        const missed = r.status === 'missed';
+        return `<tr class="${missed ? 'row-missed' : 'row-logged'}">
+          <td>${escHtml(r.date)}</td>
+          <td>${r.hours}</td>
+          <td>${missed ? '<span class="badge badge-missed">Missed</span>' : '<span class="badge badge-logged">Logged</span>'}</td>
+          <td class="preview">${escHtml(r.preview)}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table>`;
+  } else if (selectedUser) {
+    tableHtml = '<div class="empty-msg">No data for the selected range.</div>';
+  }
+
+  return `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <title>Devlog Exporter</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin:0; background:#f3f4f6; }
+      .shell { min-height:100vh; display:flex; align-items:flex-start; justify-content:center; padding:24px 12px; }
+      .card { background:white; padding:22px 24px; border-radius:16px; border:1px solid #e5e7eb; box-shadow:0 10px 25px rgba(15,23,42,0.08); width:100%; max-width:960px; }
+      h1 { margin:0 0 4px; font-size:20px; }
+      p.sub { margin:0 0 14px; font-size:13px; color:#6b7280; }
+      a { text-decoration:none; color:#2563eb; }
+      a:hover { text-decoration:underline; }
+
+      .filter-bar { display:flex; flex-wrap:wrap; gap:10px; align-items:end; margin-bottom:16px; padding:12px; background:#f9fafb; border-radius:10px; border:1px solid #e5e7eb; }
+      .filter-group { display:flex; flex-direction:column; gap:3px; }
+      .filter-group label { font-size:11px; font-weight:600; color:#6b7280; text-transform:uppercase; letter-spacing:.5px; }
+      .filter-group select, .filter-group input[type="date"] {
+        padding:6px 10px; border:1px solid #d1d5db; border-radius:8px; font-size:13px; background:white;
+      }
+      .btn { padding:7px 16px; border:none; border-radius:8px; font-size:13px; font-weight:500; cursor:pointer; }
+      .btn-primary { background:#2563eb; color:white; }
+      .btn-primary:hover { background:#1d4ed8; }
+      .btn-green { background:#16a34a; color:white; }
+      .btn-green:hover { background:#15803d; }
+
+      .summary-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(130px,1fr)); gap:10px; margin-bottom:16px; }
+      .summary-card { background:#f9fafb; border:1px solid #e5e7eb; border-radius:10px; padding:10px 14px; text-align:center; }
+      .summary-card .num { font-size:22px; font-weight:700; color:#111827; }
+      .summary-card .lbl { font-size:11px; color:#6b7280; margin-top:2px; }
+
+      table { width:100%; border-collapse:collapse; font-size:13px; }
+      thead { background:#f9fafb; }
+      th, td { padding:8px 10px; text-align:left; border-bottom:1px solid #e5e7eb; }
+      th { font-size:11px; text-transform:uppercase; letter-spacing:.5px; color:#6b7280; font-weight:600; }
+      .preview { max-width:320px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; color:#6b7280; font-size:12px; }
+      .row-missed { background:#fef2f2; }
+
+      .badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:500; }
+      .badge-logged { background:#dcfce7; color:#166534; }
+      .badge-missed { background:#fee2e2; color:#991b1b; }
+
+      .empty-msg { text-align:center; color:#9ca3af; padding:32px 0; font-size:14px; }
+      .export-bar { margin-top:14px; display:flex; gap:10px; align-items:center; }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="card">
+        <div style="font-size:12px; margin-bottom:8px;"><a href="/admin">⬅ Back to Admin</a></div>
+        <h1>📋 Devlog Exporter</h1>
+        <p class="sub">Export daily logs by user. See logged days, missed days, and total hours — download as CSV.</p>
+
+        <form class="filter-bar" method="GET" action="/admin/devlog-export">
+          <div class="filter-group">
+            <label>User</label>
+            <select name="user">
+              <option value="">All Users</option>
+              ${userOptions}
+            </select>
+          </div>
+          <div class="filter-group">
+            <label>Start Date</label>
+            <input type="date" name="start" value="${escHtml(startDate)}" />
+          </div>
+          <div class="filter-group">
+            <label>End Date</label>
+            <input type="date" name="end" value="${escHtml(endDate)}" />
+          </div>
+          <button type="submit" class="btn btn-primary">Preview</button>
+        </form>
+
+        ${summary ? `
+        <div class="summary-grid">
+          <div class="summary-card">
+            <div class="num">${summary.totalDays}</div>
+            <div class="lbl">Total Days</div>
+          </div>
+          <div class="summary-card">
+            <div class="num">${summary.daysLogged}</div>
+            <div class="lbl">Days Logged</div>
+          </div>
+          <div class="summary-card">
+            <div class="num">${summary.daysMissed}</div>
+            <div class="lbl">Days Missed</div>
+          </div>
+          <div class="summary-card">
+            <div class="num">${summary.totalHours}</div>
+            <div class="lbl">Total Hours</div>
+          </div>
+          <div class="summary-card">
+            <div class="num">${summary.avgHours}</div>
+            <div class="lbl">Avg Hours/Day</div>
+          </div>
+        </div>
+        ` : ''}
+
+        <div id="tableWrap">${tableHtml}</div>
+
+        ${rows && rows.length ? `
+        <div class="export-bar">
+          <button class="btn btn-green" onclick="exportCsv()">📥 Download CSV</button>
+          <span style="font-size:12px;color:#6b7280;">${rows.length} rows</span>
+        </div>
+        ` : ''}
+      </div>
+    </div>
+
+    <script>
+      function exportCsv() {
+        var params = new URLSearchParams(window.location.search);
+        params.set('format', 'csv');
+        window.location.href = '/admin/devlog-export?' + params.toString();
+      }
+    </script>
+  </body>
+  </html>
+  `;
+}
+
 module.exports = {
   adminPanelPage,
   adminChangePasswordPage,
@@ -888,4 +1340,6 @@ module.exports = {
   restoringBackupPage,
   restoringUploadedBackupPage,
   discordSetupPage,
+  storageCleanupPage,
+  devlogExporterPage,
 };
