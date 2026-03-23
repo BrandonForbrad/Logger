@@ -119,6 +119,11 @@ function adminPanelPage() {
             <span class="label">Discord Activity</span>
             <span class="desc">Voice channel time, message tracking, and CSV export from your Discord server</span>
           </a>
+
+          <a href="/admin/api-keys" class="pill-button">
+            <span class="label">API Keys</span>
+            <span class="desc">Manage API keys for external log dump submissions</span>
+          </a>
         </div>
       </div>
     </div>

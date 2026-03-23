@@ -543,7 +543,20 @@ function registerAdminCoreRoutes(app, deps) {
 		const guildIdVal = (req.body.guild_id || "").trim();
 		setSetting("discord_guild_id", guildIdVal, (err) => {
 			if (err) return res.status(500).send("Error saving guild ID.");
-			renderDiscordPage(req, res, { text: "Guild ID saved.", type: "ok" });
+
+			// Restart the bot with the new guild ID if it's running or a token exists
+			const { startBot, stopBot, isRunning } = require("../utils/discordBot");
+			getSetting("discord_bot_token", (err2, token) => {
+				if (token) {
+					stopBot();
+					startBot(db, token, guildIdVal);
+					setTimeout(() => {
+						renderDiscordPage(req, res, { text: "Guild ID saved and tracker restarted.", type: "ok" });
+					}, 1500);
+				} else {
+					renderDiscordPage(req, res, { text: "Guild ID saved.", type: "ok" });
+				}
+			});
 		});
 	});
 

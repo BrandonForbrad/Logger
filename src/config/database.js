@@ -443,6 +443,41 @@ db.serialize(() => {
   // Add guild_name columns for Discord server name tracking
   db.run("ALTER TABLE discord_voice_sessions ADD COLUMN guild_name TEXT", [], () => {});
   db.run("ALTER TABLE discord_messages ADD COLUMN guild_name TEXT", [], () => {});
+
+  // ── API Keys (admin-managed, used for log dump ingestion) ──
+  db.run(`
+    CREATE TABLE IF NOT EXISTS api_keys (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      key TEXT UNIQUE NOT NULL,
+      label TEXT,
+      created_by TEXT,
+      created_at TEXT,
+      last_used_at TEXT,
+      is_active INTEGER DEFAULT 1
+    )
+  `);
+
+  // ── Log Dump Categories ──
+  db.run(`
+    CREATE TABLE IF NOT EXISTS log_dump_categories (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE NOT NULL,
+      created_at TEXT
+    )
+  `);
+
+  // ── Log Dumps ──
+  db.run(`
+    CREATE TABLE IF NOT EXISTS log_dumps (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      category_id INTEGER NOT NULL,
+      log_content TEXT NOT NULL,
+      api_key_id INTEGER,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (category_id) REFERENCES log_dump_categories(id) ON DELETE CASCADE,
+      FOREIGN KEY (api_key_id) REFERENCES api_keys(id) ON DELETE SET NULL
+    )
+  `);
 });
 
 module.exports = db;

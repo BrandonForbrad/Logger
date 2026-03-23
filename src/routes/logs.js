@@ -1246,6 +1246,17 @@ function registerLogsReadRoutes(app, deps) {
 				</main>
 
 				<aside class="sidebar-card">
+					<!-- Systems & Log Dumps Links -->
+					<div style="margin-bottom: 12px; padding-bottom: 12px; border-bottom: 1px solid var(--border);">
+						<a href="/systems" style="display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--accent); color: white; border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: 500;">
+							<span>📋</span>
+							<span>Systems & Tasks</span>
+						</a>
+						<a href="/log-dumps" style="display: flex; align-items: center; gap: 8px; padding: 10px 12px; margin-top: 6px; background: #7c3aed; color: white; border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: 500;">
+							<span>📦</span>
+							<span>Log Dumps</span>
+						</a>
+					</div>
 					<div class="sidebar-heading">Tips</div>
 					<div class="sidebar-item">
 						<span>Markdown formatting</span>
@@ -1278,13 +1289,6 @@ function registerLogsReadRoutes(app, deps) {
 							: '<div class="sidebar-item"><span>No users for this filter</span></div>'
 					}
 
-					<!-- Systems Link -->
-					<div style="margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border);">
-						<a href="/systems" style="display: flex; align-items: center; gap: 8px; padding: 10px 12px; background: var(--accent); color: white; border-radius: 8px; text-decoration: none; font-size: 13px; font-weight: 500;">
-							<span>📋</span>
-							<span>Systems & Tasks</span>
-						</a>
-					</div>
 				</aside>
 			</div>
 		</div>

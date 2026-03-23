@@ -29,6 +29,7 @@ const registerUploaderRoutes = require("./uploader");
 const registerSystemsRoutes = require("./systems");
 const registerRoadmapRoutes = require("./roadmaps");
 const registerProfileRoutes = require("./profile");
+const registerLogDumpRoutes = require("./logDumps");
 
 const app = express();
 
@@ -217,6 +218,14 @@ registerLogsWriteRoutes(app, {
 	getCurrentUser,
 	isAdmin,
 	getSetting,
+});
+
+registerLogDumpRoutes(app, {
+	db,
+	views,
+	escapeHtml,
+	isAdmin,
+	getCurrentUser,
 });
 
 registerAdminRoutes(app, {

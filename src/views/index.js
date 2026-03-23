@@ -8,6 +8,8 @@ const uploader = require('./uploader');
 const systems = require('./systems');
 const roadmaps = require('./roadmaps');
 const profile = require('./profile');
+const logDumps = require('./logDumps');
+const apiKeys = require('./apiKeys');
 
 module.exports = {
   ...auth,
@@ -19,4 +21,6 @@ module.exports = {
   ...systems,
   ...roadmaps,
   ...profile,
+  ...logDumps,
+  ...apiKeys,
 };
