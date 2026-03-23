@@ -155,6 +155,70 @@ Content-Type: application/json</pre>
   "id": 42,
   "category": "BattleSystemLogs"
 }</pre>
+
+          <div style="margin-top:18px;padding-top:14px;border-top:1px solid #e5e7eb;">
+            <h3 style="font-size:14px;margin:0 0 6px;">Appending to a Log (Batched Sends)</h3>
+            <p>Use the returned <code style="background:#f3f4f6;padding:1px 5px;border-radius:4px;font-size:12px;">id</code> to append more content in subsequent requests. Useful for Roblox HttpService size limits.</p>
+
+            <div class="code-label">Endpoint</div>
+            <pre class="code-block">POST /api/log-dumps/{id}/append</pre>
+
+            <div class="code-label">Body</div>
+            <pre class="code-block">{
+  "Log": "NEXT CHUNK OF LOG CONTENT"
+}</pre>
+
+            <div class="code-label">Response (200)</div>
+            <pre class="code-block">{
+  "success": true,
+  "id": 42,
+  "appended": 1024,
+  "total_length": 5120
+}</pre>
+
+            <div class="code-label">Roblox Lua Example</div>
+            <pre class="code-block">local HttpService = game:GetService("HttpService")
+local API_URL = "https://yoursite.com/api/log-dumps"
+local API_KEY = "YOUR_API_KEY"
+
+local function sendLog(category, fullLog)
+    local CHUNK_SIZE = 3500000  -- ~3.5MB safe limit
+    local headers = {
+        ["Authorization"] = "Bearer " .. API_KEY,
+        ["Content-Type"] = "application/json"
+    }
+
+    -- First chunk: create the log
+    local firstChunk = string.sub(fullLog, 1, CHUNK_SIZE)
+    local res = HttpService:RequestAsync({
+        Url = API_URL,
+        Method = "POST",
+        Headers = headers,
+        Body = HttpService:JSONEncode({
+            Category = category,
+            Log = firstChunk
+        })
+    })
+
+    local data = HttpService:JSONDecode(res.Body)
+    local logId = data.id
+
+    -- Send remaining chunks
+    local offset = CHUNK_SIZE + 1
+    while offset &lt;= #fullLog do
+        local chunk = string.sub(fullLog, offset, offset + CHUNK_SIZE - 1)
+        HttpService:RequestAsync({
+            Url = API_URL .. "/" .. logId .. "/append",
+            Method = "POST",
+            Headers = headers,
+            Body = HttpService:JSONEncode({ Log = chunk })
+        })
+        offset = offset + CHUNK_SIZE
+    end
+
+    return logId
+end</pre>
+          </div>
         </div>
       </div>
     </div>

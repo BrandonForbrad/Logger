@@ -152,6 +152,47 @@ module.exports = function registerLogDumpRoutes(app, deps) {
 		});
 	});
 
+	// ── API: append to an existing log dump (for batched sends) ──
+	app.post("/api/log-dumps/:id/append", (req, res) => {
+		const authHeader = req.headers.authorization || "";
+		const token = authHeader.startsWith("Bearer ") ? authHeader.slice(7).trim() : "";
+
+		if (!token) {
+			return res.status(401).json({ error: "Missing Authorization header. Use: Bearer YOUR_API_KEY" });
+		}
+
+		db.get("SELECT * FROM api_keys WHERE key = ? AND is_active = 1", [token], (err, apiKey) => {
+			if (err) return res.status(500).json({ error: "Database error" });
+			if (!apiKey) return res.status(403).json({ error: "Invalid or disabled API key" });
+
+			const dumpId = req.params.id;
+			const logContent = req.body.Log || req.body.log;
+
+			if (!logContent || typeof logContent !== "string" || !logContent.trim()) {
+				return res.status(400).json({ error: "Log is required" });
+			}
+
+			const now = new Date().toISOString();
+			db.run("UPDATE api_keys SET last_used_at = ? WHERE id = ?", [now, apiKey.id]);
+
+			db.get("SELECT id, log_content FROM log_dumps WHERE id = ?", [dumpId], (err2, dump) => {
+				if (err2) return res.status(500).json({ error: "Database error" });
+				if (!dump) return res.status(404).json({ error: "Log dump not found" });
+
+				const updated = dump.log_content + logContent;
+				db.run("UPDATE log_dumps SET log_content = ? WHERE id = ?", [updated, dump.id], (err3) => {
+					if (err3) return res.status(500).json({ error: "Failed to append" });
+					res.json({
+						success: true,
+						id: dump.id,
+						appended: logContent.length,
+						total_length: updated.length,
+					});
+				});
+			});
+		});
+	});
+
 	// ── Admin: API Keys management ──
 	app.get("/admin/api-keys", (req, res) => {
 		if (!isAdmin(req)) return res.status(403).send("Forbidden");
