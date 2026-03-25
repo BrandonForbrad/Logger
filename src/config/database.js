@@ -478,6 +478,52 @@ db.serialize(() => {
       FOREIGN KEY (api_key_id) REFERENCES api_keys(id) ON DELETE SET NULL
     )
   `);
+
+  // ── Tooling (admin Node.js script runner) ──
+  db.run(`
+    CREATE TABLE IF NOT EXISTS tools (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      description TEXT,
+      code TEXT DEFAULT '',
+      secrets TEXT DEFAULT '{}',
+      last_run_at TEXT,
+      last_exit_code INTEGER,
+      created_by TEXT,
+      created_at TEXT,
+      updated_at TEXT
+    )
+  `);
+
+  db.run(`
+    CREATE TABLE IF NOT EXISTS tool_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      tool_id INTEGER NOT NULL,
+      status TEXT DEFAULT 'queued',
+      output TEXT DEFAULT '',
+      exit_code INTEGER,
+      started_at TEXT,
+      finished_at TEXT,
+      run_by TEXT,
+      FOREIGN KEY (tool_id) REFERENCES tools(id) ON DELETE CASCADE
+    )
+  `);
+
+  // Migration: add language column to tools
+  db.run("ALTER TABLE tools ADD COLUMN language TEXT DEFAULT 'node'", () => {});
+
+  // Migration: add run_command column to tools
+  db.run("ALTER TABLE tools ADD COLUMN run_command TEXT DEFAULT ''", () => {});
+
+  // Migration: add github_token column to tools
+  db.run("ALTER TABLE tools ADD COLUMN github_token TEXT DEFAULT ''", () => {});
+
+  // Migration: add webapp columns to tools
+  db.run("ALTER TABLE tools ADD COLUMN webapp_enabled INTEGER DEFAULT 0", () => {});
+  db.run("ALTER TABLE tools ADD COLUMN webapp_dir TEXT DEFAULT ''", () => {});
+
+  // Migration: add webapp_public column to tools
+  db.run("ALTER TABLE tools ADD COLUMN webapp_public INTEGER DEFAULT 0", () => {});
 });
 
 module.exports = db;

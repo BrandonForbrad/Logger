@@ -1,5 +1,7 @@
 /backups
+/bin
 /logs.db
 /node_modules
 /package-lock.json
+/tools
 /uploads

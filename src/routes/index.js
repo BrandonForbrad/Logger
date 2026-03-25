@@ -30,6 +30,7 @@ const registerSystemsRoutes = require("./systems");
 const registerRoadmapRoutes = require("./roadmaps");
 const registerProfileRoutes = require("./profile");
 const registerLogDumpRoutes = require("./logDumps");
+const registerToolingRoutes = require("./tooling");
 
 const app = express();
 
@@ -221,6 +222,14 @@ registerLogsWriteRoutes(app, {
 });
 
 registerLogDumpRoutes(app, {
+	db,
+	views,
+	escapeHtml,
+	isAdmin,
+	getCurrentUser,
+});
+
+registerToolingRoutes(app, {
 	db,
 	views,
 	escapeHtml,

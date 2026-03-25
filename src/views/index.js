@@ -10,6 +10,7 @@ const roadmaps = require('./roadmaps');
 const profile = require('./profile');
 const logDumps = require('./logDumps');
 const apiKeys = require('./apiKeys');
+const tooling = require('./tooling');
 
 module.exports = {
   ...auth,
@@ -23,4 +24,5 @@ module.exports = {
   ...profile,
   ...logDumps,
   ...apiKeys,
+  ...tooling,
 };

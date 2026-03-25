@@ -124,6 +124,11 @@ function adminPanelPage() {
             <span class="label">API Keys</span>
             <span class="desc">Manage API keys for external log dump submissions</span>
           </a>
+
+          <a href="/admin/tooling" class="pill-button">
+            <span class="label">Tooling</span>
+            <span class="desc">Create, run, and manage Node.js scripts with stored secrets</span>
+          </a>
         </div>
       </div>
     </div>

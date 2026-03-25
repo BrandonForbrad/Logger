@@ -1,0 +1,640 @@
+function toolingListPage({ tools, msg }) {
+  const esc = (s) => !s ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  const msgHtml = msg
+    ? `<div class="msg ${msg.type === 'error' ? 'msg-err' : 'msg-ok'}">${esc(msg.text)}</div>`
+    : '';
+
+  const toolsHtml = tools.length === 0
+    ? '<div class="empty">No tools yet. Create one to get started.</div>'
+    : tools.map(t => {
+      const statusCls = t._status === 'running' ? 'st-running' : (t.last_exit_code === 0 ? 'st-ok' : (t.last_exit_code != null ? 'st-err' : 'st-idle'));
+      const statusLabel = t._status === 'running' ? 'Running' : (t.last_exit_code === 0 ? 'Completed' : (t.last_exit_code != null ? 'Error (exit ' + t.last_exit_code + ')' : 'Never run'));
+      return `
+      <a href="/admin/tooling/${t.id}" class="tool-card">
+        <div class="tool-top">
+          <span class="tool-name">${esc(t.name)}<span class="lang-badge">${esc(t.language || 'node')}</span></span>
+          <span class="status-pill ${statusCls}">${statusLabel}</span>
+        </div>
+        <div class="tool-desc">${esc(t.description) || 'No description'}</div>
+        <div class="tool-meta">
+          ${t.last_run_at ? 'Last run: ' + new Date(t.last_run_at).toLocaleString() : 'Never run'}
+          · Created by ${esc(t.created_by) || 'admin'}
+        </div>
+      </a>`;
+    }).join('');
+
+  return `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <title>Tooling</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin:0; background:#f3f4f6; }
+      .shell { min-height:100vh; display:flex; align-items:flex-start; justify-content:center; padding:24px 12px; }
+      .card { background:white; padding:22px 24px; border-radius:16px; border:1px solid #e5e7eb; box-shadow:0 10px 25px rgba(15,23,42,0.08); width:100%; max-width:800px; }
+      h1 { margin:0 0 8px; font-size:20px; }
+      p.sub { margin:0 0 14px; font-size:13px; color:#6b7280; }
+      a { text-decoration:none; }
+      a:hover { text-decoration:underline; }
+      .top-link { margin-bottom:10px; font-size:12px; color:#6b7280; }
+      .msg { padding:8px 14px; border-radius:10px; margin-bottom:12px; font-size:13px; }
+      .msg-ok { background:#d1fae5; color:#065f46; }
+      .msg-err { background:#fee2e2; color:#991b1b; }
+      .create-row { display:flex; gap:8px; margin-bottom:18px; flex-wrap:wrap; align-items:flex-end; }
+      .create-row input { padding:7px 10px; border-radius:10px; border:1px solid #d1d5db; font-family:inherit; font-size:13px; }
+      .btn { padding:7px 14px; border-radius:999px; border:none; background:#00a2ff; color:white; font-weight:500; cursor:pointer; font-size:13px; }
+      .tool-card {
+        display:block; border:1px solid #e5e7eb; border-radius:12px; padding:14px 16px;
+        margin-bottom:8px; background:#fafbfc; color:inherit; transition:border-color .15s;
+      }
+      .tool-card:hover { border-color:#00a2ff; text-decoration:none; }
+      .tool-top { display:flex; justify-content:space-between; align-items:center; margin-bottom:4px; }
+      .tool-name { font-size:14px; font-weight:600; }
+      .status-pill { font-size:11px; font-weight:600; padding:2px 10px; border-radius:999px; }
+      .st-running { background:#dbeafe; color:#1d4ed8; }
+      .st-ok { background:#d1fae5; color:#065f46; }
+      .st-err { background:#fee2e2; color:#991b1b; }
+      .st-idle { background:#f3f4f6; color:#6b7280; }
+      .tool-desc { font-size:12px; color:#6b7280; margin-bottom:4px; }
+      .tool-meta { font-size:11px; color:#9ca3af; }
+      .lang-badge { font-size:10px; font-weight:600; padding:1px 8px; border-radius:999px; background:#f0f9ff; color:#0369a1; margin-left:6px; }
+      .empty { text-align:center; padding:40px 0; color:#9ca3af; font-size:14px; }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="card">
+        <div class="top-link"><a href="/admin/panel">⬅ Back to Admin Panel</a></div>
+        <h1>Tooling</h1>
+        <p class="sub">Create and run scripts in Node.js, Python, Lua, Ruby, or Bash. Install packages globally. Admin only.</p>
+        ${msgHtml}
+        <form method="POST" action="/admin/tooling" class="create-row">
+          <div>
+            <label style="font-size:12px;font-weight:500;display:block;margin-bottom:3px;">Name</label>
+            <input type="text" name="name" placeholder="e.g. Deploy Script" required style="width:200px;" />
+          </div>
+          <div>
+            <label style="font-size:12px;font-weight:500;display:block;margin-bottom:3px;">Description</label>
+            <input type="text" name="description" placeholder="Optional" style="width:240px;" />
+          </div>
+          <button type="submit" class="btn">+ New Tool</button>
+        </form>
+        ${toolsHtml}
+      </div>
+    </div>
+  </body>
+  </html>
+  `;
+}
+
+function toolingEditorPage({ tool, runs, msg, runningStatus }) {
+  const esc = (s) => !s ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  let secrets = {};
+  try { secrets = JSON.parse(tool.secrets || '{}'); } catch (e) {}
+  const secretRows = Object.entries(secrets).map(([k, v]) =>
+    `<div class="secret-row">
+      <input type="text" name="secret_key" value="${esc(k)}" placeholder="KEY" class="secret-input" />
+      <input type="text" name="secret_val" value="${esc(v)}" placeholder="value" class="secret-input secret-val" />
+      <button type="button" class="rm-btn" onclick="this.parentElement.remove()">✕</button>
+    </div>`
+  ).join('');
+
+  const isRunning = runningStatus === 'running';
+
+  const statusCls = isRunning ? 'st-running' : (tool.last_exit_code === 0 ? 'st-ok' : (tool.last_exit_code != null ? 'st-err' : 'st-idle'));
+  const statusLabel = isRunning ? 'Running' : (tool.last_exit_code === 0 ? 'Completed' : (tool.last_exit_code != null ? 'Error (exit ' + tool.last_exit_code + ')' : 'Never run'));
+
+  const runsHtml = (runs || []).map(r => {
+    const sCls = r.status === 'running' ? 'st-running' : (r.exit_code === 0 ? 'st-ok' : (r.exit_code != null ? 'st-err' : 'st-idle'));
+    return `<div class="run-row">
+      <span class="status-pill ${sCls}" style="min-width:70px;text-align:center;">${esc(r.status)}</span>
+      <span style="font-size:11px;color:#6b7280;">${r.started_at ? new Date(r.started_at).toLocaleString() : '—'}</span>
+      <span style="font-size:11px;color:#9ca3af;">${r.exit_code != null ? 'exit ' + r.exit_code : ''}</span>
+      <a href="/admin/tooling/${tool.id}/runs/${r.id}" style="font-size:11px;color:#00a2ff;">View Output</a>
+    </div>`;
+  }).join('');
+
+  const msgHtml = msg
+    ? `<div class="msg ${msg.type === 'error' ? 'msg-err' : 'msg-ok'}">${esc(msg.text)}</div>`
+    : '';
+
+  return `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <title>${esc(tool.name)} – Tooling</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin:0; background:#f3f4f6; }
+      .shell { min-height:100vh; display:flex; align-items:flex-start; justify-content:center; padding:24px 12px; }
+      .card { background:white; padding:22px 24px; border-radius:16px; border:1px solid #e5e7eb; box-shadow:0 10px 25px rgba(15,23,42,0.08); width:100%; max-width:1100px; }
+      h1 { margin:0 0 4px; font-size:20px; display:flex; align-items:center; gap:10px; }
+      p.sub { margin:0 0 14px; font-size:13px; color:#6b7280; }
+      a { text-decoration:none; }
+      a:hover { text-decoration:underline; }
+      .top-link { margin-bottom:10px; font-size:12px; color:#6b7280; }
+      .msg { padding:8px 14px; border-radius:10px; margin-bottom:12px; font-size:13px; }
+      .msg-ok { background:#d1fae5; color:#065f46; }
+      .msg-err { background:#fee2e2; color:#991b1b; }
+      .status-pill { font-size:11px; font-weight:600; padding:2px 10px; border-radius:999px; display:inline-block; }
+      .st-running { background:#dbeafe; color:#1d4ed8; }
+      .st-ok { background:#d1fae5; color:#065f46; }
+      .st-err { background:#fee2e2; color:#991b1b; }
+      .st-idle { background:#f3f4f6; color:#6b7280; }
+
+      .tabs { display:flex; gap:0; margin-bottom:14px; border-bottom:2px solid #e5e7eb; }
+      .tab { padding:8px 16px; font-size:13px; font-weight:500; cursor:pointer; border:none; background:none; color:#6b7280; border-bottom:2px solid transparent; margin-bottom:-2px; }
+      .tab.active { color:#00a2ff; border-bottom-color:#00a2ff; }
+
+      .tab-panel { display:none; }
+      .tab-panel.active { display:block; }
+
+      .editor-area {
+        width:100%; min-height:400px; padding:14px 16px; font-family:'Cascadia Code','Fira Code',monospace;
+        font-size:13px; line-height:1.6; border:1px solid #e5e7eb; border-radius:10px;
+        background:#1e1e2e; color:#cdd6f4; resize:vertical; tab-size:2;
+      }
+      .btn-row { display:flex; gap:8px; margin-top:12px; flex-wrap:wrap; }
+      .btn { padding:8px 16px; border-radius:999px; border:none; font-weight:500; cursor:pointer; font-size:13px; }
+      .btn-primary { background:#00a2ff; color:white; }
+      .btn-success { background:#10b981; color:white; }
+      .btn-danger { background:#ef4444; color:white; }
+      .btn-ghost { background:#f3f4f6; color:#374151; border:1px solid #d1d5db; }
+
+      .console-output {
+        background:#0f0f17; color:#a6e3a1; padding:14px 16px; border-radius:10px;
+        font-family:'Cascadia Code','Fira Code',monospace; font-size:12px; line-height:1.6;
+        min-height:200px; max-height:500px; overflow:auto; white-space:pre-wrap; word-break:break-all;
+        margin-top:10px; border:1px solid #1e1e2e;
+      }
+      .console-output .stderr { color:#f38ba8; }
+
+      .secrets-area { margin-top:8px; }
+      .secret-row { display:flex; gap:6px; align-items:center; margin-bottom:6px; }
+      .secret-input { padding:6px 10px; border-radius:8px; border:1px solid #d1d5db; font-family:inherit; font-size:13px; width:180px; }
+      .secret-val { flex:1; }
+      .rm-btn { border:none; background:none; color:#b91c1c; cursor:pointer; font-size:14px; padding:2px 6px; }
+      .add-secret-btn { font-size:12px; color:#00a2ff; cursor:pointer; background:none; border:none; padding:4px 0; font-weight:500; }
+
+      .run-row { display:flex; align-items:center; gap:10px; padding:6px 0; border-bottom:1px solid #f3f4f6; }
+
+      .meta-form { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; align-items:flex-end; }
+      .meta-form input { padding:7px 10px; border-radius:10px; border:1px solid #d1d5db; font-family:inherit; font-size:13px; }
+      .meta-form label { font-size:12px; font-weight:500; display:block; margin-bottom:3px; }
+
+      .cmd-row { display:flex; gap:8px; margin-top:10px; }
+      .cmd-input { flex:1; padding:8px 12px; border-radius:10px; border:1px solid #d1d5db; font-family:'Cascadia Code','Fira Code',monospace; font-size:13px; }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="card">
+        <div class="top-link"><a href="/admin/tooling">⬅ Back to Tooling</a></div>
+        ${msgHtml}
+
+        <h1>
+          ${esc(tool.name)}
+          <span class="status-pill ${statusCls}">${statusLabel}</span>
+        </h1>
+        <p class="sub">${esc(tool.description) || 'No description'}</p>
+
+        <div class="tabs">
+          <button class="tab active" onclick="switchTab('code')">Code</button>
+          <button class="tab" onclick="switchTab('secrets')">Secrets</button>
+          <button class="tab" onclick="switchTab('console')">Console</button>
+          <button class="tab" onclick="switchTab('packages')">Packages</button>
+          <button class="tab" onclick="switchTab('runs')">Run History</button>
+          <button class="tab" onclick="switchTab('settings')">Settings</button>
+        </div>
+
+        <!-- CODE TAB -->
+        <div id="tab-code" class="tab-panel active">
+          <form method="POST" action="/admin/tooling/${tool.id}/save">
+            <div style="display:flex;gap:10px;align-items:center;margin-bottom:8px;">
+              <label style="font-size:12px;font-weight:500;">Language:</label>
+              <select name="language" style="padding:5px 10px;border-radius:8px;border:1px solid #d1d5db;font-size:13px;font-family:inherit;">
+                <option value="node"${(tool.language||'node')==='node'?' selected':''}>Node.js</option>
+                <option value="python"${tool.language==='python'?' selected':''}>Python</option>
+                <option value="luau"${tool.language==='luau'?' selected':''}>Luau</option>
+                <option value="lua"${tool.language==='lua'?' selected':''}>Lua</option>
+                <option value="ruby"${tool.language==='ruby'?' selected':''}>Ruby</option>
+                <option value="bash"${tool.language==='bash'?' selected':''}>Bash / Shell</option>
+              </select>
+            </div>
+            <textarea name="code" class="editor-area" spellcheck="false">${esc(tool.code)}</textarea>
+            <div class="btn-row">
+              <button type="submit" class="btn btn-primary">Save</button>
+              <button type="button" class="btn btn-success" onclick="runTool()">▶ Run</button>
+              ${isRunning ? `<button type="button" class="btn btn-danger" onclick="stopTool()">■ Stop</button>` : ''}
+            </div>
+          </form>
+        </div>
+
+        <!-- SECRETS TAB -->
+        <div id="tab-secrets" class="tab-panel">
+          <p style="font-size:13px;color:#6b7280;margin:0 0 10px;">Secrets are injected as environment variables when your tool runs.</p>
+          <form method="POST" action="/admin/tooling/${tool.id}/secrets">
+            <div id="secretsList" class="secrets-area">
+              ${secretRows}
+            </div>
+            <button type="button" class="add-secret-btn" onclick="addSecret()">+ Add Secret</button>
+            <div class="btn-row">
+              <button type="submit" class="btn btn-primary">Save Secrets</button>
+            </div>
+          </form>
+        </div>
+
+        <!-- CONSOLE TAB -->
+        <div id="tab-console" class="tab-panel">
+          <div id="consoleOutput" class="console-output">Ready.\n</div>
+          <div class="btn-row">
+            <button type="button" class="btn btn-success" onclick="runTool()">▶ Run</button>
+            ${isRunning ? `<button type="button" class="btn btn-danger" onclick="stopTool()">■ Stop</button>` : ''}
+            <button type="button" class="btn btn-ghost" onclick="clearConsole()">Clear</button>
+          </div>
+          <form onsubmit="sendCommand(event)" class="cmd-row">
+            <input type="text" id="cmdInput" class="cmd-input" placeholder="Run a shell command…" autocomplete="off" />
+            <button type="submit" class="btn btn-primary">Send</button>
+          </form>
+        </div>
+
+        <!-- RUN HISTORY TAB -->
+        <div id="tab-runs" class="tab-panel">
+          ${runsHtml || '<div style="text-align:center;padding:20px;color:#9ca3af;font-size:13px;">No runs yet.</div>'}
+        </div>
+
+        <!-- PACKAGES TAB -->
+        <div id="tab-packages" class="tab-panel">
+          <p style="font-size:13px;color:#6b7280;margin:0 0 12px;">Install packages globally so all tools can use them. Packages are installed to the system (npm to project node_modules, pip/luarocks system-wide).</p>
+          <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px;">
+            <div>
+              <label style="font-size:12px;font-weight:500;display:block;margin-bottom:3px;">Ecosystem</label>
+              <select id="pkgEcosystem" style="padding:7px 10px;border-radius:10px;border:1px solid #d1d5db;font-size:13px;font-family:inherit;">
+                <option value="npm">npm (Node.js)</option>
+                <option value="pip">pip (Python)</option>
+                <option value="luarocks">luarocks (Lua)</option>
+              </select>
+            </div>
+            <div style="flex:1;min-width:180px;">
+              <label style="font-size:12px;font-weight:500;display:block;margin-bottom:3px;">Package name</label>
+              <input type="text" id="pkgName" placeholder="e.g. lodash, requests, luasocket" style="width:100%;padding:7px 10px;border-radius:10px;border:1px solid #d1d5db;font-size:13px;font-family:inherit;box-sizing:border-box;" />
+            </div>
+            <button type="button" class="btn btn-primary" onclick="installPackage()">Install</button>
+            <button type="button" class="btn btn-ghost" onclick="listPackages()">List Installed</button>
+          </div>
+          <div id="pkgConsole" class="console-output" style="min-height:150px;">Ready.\n</div>
+        </div>
+
+        <!-- SETTINGS TAB -->
+        <div id="tab-settings" class="tab-panel">
+          <form method="POST" action="/admin/tooling/${tool.id}/update" class="meta-form">
+            <div>
+              <label>Name</label>
+              <input type="text" name="name" value="${esc(tool.name)}" required style="width:200px;" />
+            </div>
+            <div>
+              <label>Description</label>
+              <input type="text" name="description" value="${esc(tool.description)}" style="width:300px;" />
+            </div>
+            <button type="submit" class="btn btn-primary">Update</button>
+          </form>
+          <div style="margin-top:20px;padding-top:14px;border-top:1px solid #e5e7eb;">
+            <form method="POST" action="/admin/tooling/${tool.id}/delete" onsubmit="return confirm('Delete this tool permanently?')">
+              <button type="submit" class="btn btn-danger">Delete Tool</button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      function switchTab(name) {
+        document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.getElementById('tab-' + name).classList.add('active');
+        event.target.classList.add('active');
+      }
+
+      function addSecret() {
+        var row = document.createElement('div');
+        row.className = 'secret-row';
+        row.innerHTML = '<input type="text" name="secret_key" placeholder="KEY" class="secret-input" />'
+          + '<input type="text" name="secret_val" placeholder="value" class="secret-input secret-val" />'
+          + '<button type="button" class="rm-btn" onclick="this.parentElement.remove()">✕</button>';
+        document.getElementById('secretsList').appendChild(row);
+      }
+
+      var pollTimer = null;
+
+      function appendConsole(text, isErr) {
+        var el = document.getElementById('consoleOutput');
+        if (isErr) {
+          el.innerHTML += '<span class="stderr">' + ansiToHtml(text) + '</span>';
+        } else {
+          el.innerHTML += ansiToHtml(text);
+        }
+        el.scrollTop = el.scrollHeight;
+      }
+
+      function escHtml(s) {
+        var d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+      }
+
+      var ansiColors = {
+        30:'#585b70',31:'#f38ba8',32:'#a6e3a1',33:'#f9e2af',
+        34:'#89b4fa',35:'#cba6f7',36:'#94e2d5',37:'#cdd6f4',
+        90:'#6c7086',91:'#f38ba8',92:'#a6e3a1',93:'#f9e2af',
+        94:'#89b4fa',95:'#cba6f7',96:'#94e2d5',97:'#ffffff'
+      };
+      var ansiBgColors = {
+        40:'#585b70',41:'#f38ba8',42:'#a6e3a1',43:'#f9e2af',
+        44:'#89b4fa',45:'#cba6f7',46:'#94e2d5',47:'#cdd6f4',
+        100:'#6c7086',101:'#f38ba8',102:'#a6e3a1',103:'#f9e2af',
+        104:'#89b4fa',105:'#cba6f7',106:'#94e2d5',107:'#ffffff'
+      };
+
+      function ansiToHtml(raw) {
+        var result = '';
+        var openTags = 0;
+        var re = /\\x1b\\[([0-9;]*)m/g;
+        var lastIdx = 0;
+        var m;
+        while ((m = re.exec(raw)) !== null) {
+          result += escHtml(raw.substring(lastIdx, m.index));
+          lastIdx = re.lastIndex;
+          var parts = m[1] ? m[1].split(';').map(Number) : [0];
+          for (var pi = 0; pi < parts.length; pi++) {
+            var c = parts[pi];
+            if (c === 0) {
+              while (openTags > 0) { result += '</span>'; openTags--; }
+            } else {
+              var styles = [];
+              if (c === 1) styles.push('font-weight:bold');
+              if (c === 2) styles.push('opacity:0.7');
+              if (c === 3) styles.push('font-style:italic');
+              if (c === 4) styles.push('text-decoration:underline');
+              if (ansiColors[c]) styles.push('color:' + ansiColors[c]);
+              if (ansiBgColors[c]) styles.push('background:' + ansiBgColors[c]);
+              if (styles.length) {
+                result += '<span style="' + styles.join(';') + '">';
+                openTags++;
+              }
+            }
+          }
+        }
+        result += escHtml(raw.substring(lastIdx));
+        while (openTags > 0) { result += '</span>'; openTags--; }
+        return result;
+      }
+
+      function clearConsole() {
+        document.getElementById('consoleOutput').innerHTML = '';
+      }
+
+      function runTool() {
+        clearConsole();
+        appendConsole('Starting tool...\\n');
+        fetch('/admin/tooling/${tool.id}/run', { method: 'POST' })
+          .then(r => r.json())
+          .then(data => {
+            if (data.error) { appendConsole('Error: ' + data.error + '\\n', true); return; }
+            appendConsole('Run #' + data.run_id + ' started.\\n');
+            pollOutput(data.run_id);
+          })
+          .catch(e => appendConsole('Request failed: ' + e + '\\n', true));
+      }
+
+      function stopTool() {
+        fetch('/admin/tooling/${tool.id}/stop', { method: 'POST' })
+          .then(r => r.json())
+          .then(data => {
+            appendConsole('\\n' + (data.message || 'Stop signal sent.') + '\\n');
+          })
+          .catch(e => appendConsole('Stop failed: ' + e + '\\n', true));
+      }
+
+      var lastLen = 0;
+      function pollOutput(runId) {
+        if (pollTimer) clearInterval(pollTimer);
+        lastLen = 0;
+        pollTimer = setInterval(function() {
+          fetch('/admin/tooling/${tool.id}/runs/' + runId + '/stream?offset=' + lastLen)
+            .then(r => r.json())
+            .then(data => {
+              if (data.chunk) {
+                appendConsole(data.chunk);
+                lastLen = data.offset;
+              }
+              if (data.status !== 'running') {
+                clearInterval(pollTimer);
+                pollTimer = null;
+                if (data.exit_code != null) {
+                  appendConsole('\\nProcess exited with code ' + data.exit_code + '\\n');
+                }
+              }
+            })
+            .catch(() => { clearInterval(pollTimer); pollTimer = null; });
+        }, 500);
+      }
+
+      function sendCommand(e) {
+        e.preventDefault();
+        var input = document.getElementById('cmdInput');
+        var cmd = input.value.trim();
+        if (!cmd) return;
+        input.value = '';
+        appendConsole('$ ' + cmd + '\\n');
+        fetch('/admin/tooling/${tool.id}/exec', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({command: cmd})
+        })
+          .then(r => r.json())
+          .then(data => {
+            if (data.error) { appendConsole('Error: ' + data.error + '\\n', true); return; }
+            appendConsole('Command started, run #' + data.run_id + '\\n');
+            pollOutput(data.run_id);
+          })
+          .catch(e => appendConsole('Request failed: ' + e + '\\n', true));
+      }
+
+      /* ── Package manager ── */
+      var pkgPollTimer = null;
+
+      function appendPkgConsole(text) {
+        var el = document.getElementById('pkgConsole');
+        el.innerHTML += ansiToHtml(text);
+        el.scrollTop = el.scrollHeight;
+      }
+
+      function installPackage() {
+        var eco = document.getElementById('pkgEcosystem').value;
+        var pkg = document.getElementById('pkgName').value.trim();
+        if (!pkg) return;
+        document.getElementById('pkgConsole').innerHTML = '';
+        appendPkgConsole('Installing ' + pkg + ' via ' + eco + '...\\n');
+        fetch('/admin/tooling/${tool.id}/install-package', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ ecosystem: eco, package: pkg })
+        })
+          .then(r => r.json())
+          .then(data => {
+            if (data.error) { appendPkgConsole('Error: ' + data.error + '\\n'); return; }
+            appendPkgConsole('Run #' + data.run_id + ' started.\\n');
+            pollPkgOutput(data.run_id);
+          })
+          .catch(e => appendPkgConsole('Request failed: ' + e + '\\n'));
+      }
+
+      function listPackages() {
+        var eco = document.getElementById('pkgEcosystem').value;
+        var cmd;
+        if (eco === 'pip') cmd = 'pip list';
+        else if (eco === 'luarocks') cmd = 'luarocks list';
+        else cmd = 'npm list --depth=0';
+        document.getElementById('pkgConsole').innerHTML = '';
+        appendPkgConsole('$ ' + cmd + '\\n');
+        fetch('/admin/tooling/${tool.id}/exec', {
+          method: 'POST',
+          headers: {'Content-Type':'application/json'},
+          body: JSON.stringify({ command: cmd })
+        })
+          .then(r => r.json())
+          .then(data => {
+            if (data.error) { appendPkgConsole('Error: ' + data.error + '\\n'); return; }
+            pollPkgOutput(data.run_id);
+          })
+          .catch(e => appendPkgConsole('Request failed: ' + e + '\\n'));
+      }
+
+      var pkgLastLen = 0;
+      function pollPkgOutput(runId) {
+        if (pkgPollTimer) clearInterval(pkgPollTimer);
+        pkgLastLen = 0;
+        pkgPollTimer = setInterval(function() {
+          fetch('/admin/tooling/${tool.id}/runs/' + runId + '/stream?offset=' + pkgLastLen)
+            .then(r => r.json())
+            .then(data => {
+              if (data.chunk) {
+                appendPkgConsole(data.chunk);
+                pkgLastLen = data.offset;
+              }
+              if (data.status !== 'running') {
+                clearInterval(pkgPollTimer);
+                pkgPollTimer = null;
+                if (data.exit_code != null) {
+                  appendPkgConsole('\\nDone (exit code ' + data.exit_code + ')\\n');
+                }
+              }
+            })
+            .catch(() => { clearInterval(pkgPollTimer); pkgPollTimer = null; });
+        }, 500);
+      }
+    </script>
+  </body>
+  </html>
+  `;
+}
+
+function toolRunOutputPage({ tool, run }) {
+  const esc = (s) => !s ? '' : String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+
+  const sCls = run.status === 'running' ? 'st-running' : (run.exit_code === 0 ? 'st-ok' : (run.exit_code != null ? 'st-err' : 'st-idle'));
+
+  return `
+  <!DOCTYPE html>
+  <html>
+  <head>
+    <title>Run #${run.id} – ${esc(tool.name)}</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin:0; background:#f3f4f6; }
+      .shell { min-height:100vh; display:flex; align-items:flex-start; justify-content:center; padding:24px 12px; }
+      .card { background:white; padding:22px 24px; border-radius:16px; border:1px solid #e5e7eb; box-shadow:0 10px 25px rgba(15,23,42,0.08); width:100%; max-width:1000px; }
+      h1 { margin:0 0 8px; font-size:18px; }
+      a { text-decoration:none; font-size:12px; color:#6b7280; }
+      a:hover { text-decoration:underline; }
+      .top-link { margin-bottom:10px; }
+      .meta { font-size:12px; color:#6b7280; margin-bottom:12px; }
+      .status-pill { font-size:11px; font-weight:600; padding:2px 10px; border-radius:999px; display:inline-block; }
+      .st-running { background:#dbeafe; color:#1d4ed8; }
+      .st-ok { background:#d1fae5; color:#065f46; }
+      .st-err { background:#fee2e2; color:#991b1b; }
+      .st-idle { background:#f3f4f6; color:#6b7280; }
+      .output {
+        background:#0f0f17; color:#a6e3a1; padding:14px 16px; border-radius:10px;
+        font-family:'Cascadia Code','Fira Code',monospace; font-size:12px; line-height:1.6;
+        overflow:auto; white-space:pre-wrap; word-break:break-all; max-height:600px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="shell">
+      <div class="card">
+        <div class="top-link"><a href="/admin/tooling/${tool.id}">⬅ Back to ${esc(tool.name)}</a></div>
+        <h1>Run #${run.id} <span class="status-pill ${sCls}">${esc(run.status)}</span></h1>
+        <div class="meta">
+          Started: ${run.started_at ? new Date(run.started_at).toLocaleString() : '—'}
+          · Finished: ${run.finished_at ? new Date(run.finished_at).toLocaleString() : '—'}
+          · Exit code: ${run.exit_code != null ? run.exit_code : '—'}
+          · Run by: ${esc(run.run_by) || '—'}
+        </div>
+        <pre class="output" id="runOutput">${esc(run.output) || '(no output)'}</pre>
+      </div>
+    </div>
+    <script>
+      (function() {
+        var el = document.getElementById('runOutput');
+        var raw = el.textContent;
+        if (!raw || raw === '(no output)') return;
+
+        var ansiColors = {
+          30:'#585b70',31:'#f38ba8',32:'#a6e3a1',33:'#f9e2af',
+          34:'#89b4fa',35:'#cba6f7',36:'#94e2d5',37:'#cdd6f4',
+          90:'#6c7086',91:'#f38ba8',92:'#a6e3a1',93:'#f9e2af',
+          94:'#89b4fa',95:'#cba6f7',96:'#94e2d5',97:'#ffffff'
+        };
+        var ansiBgColors = {
+          40:'#585b70',41:'#f38ba8',42:'#a6e3a1',43:'#f9e2af',
+          44:'#89b4fa',45:'#cba6f7',46:'#94e2d5',47:'#cdd6f4'
+        };
+        function escH(s) { var d = document.createElement('div'); d.textContent = s; return d.innerHTML; }
+        function ansiToHtml(r) {
+          var res = '', open = 0, re = /\\x1b\\[([0-9;]*)m/g, li = 0, m;
+          while ((m = re.exec(r)) !== null) {
+            res += escH(r.substring(li, m.index)); li = re.lastIndex;
+            var parts = m[1] ? m[1].split(';').map(Number) : [0];
+            for (var i = 0; i < parts.length; i++) {
+              var c = parts[i];
+              if (c === 0) { while (open > 0) { res += '</span>'; open--; } }
+              else {
+                var st = [];
+                if (c===1) st.push('font-weight:bold');
+                if (c===3) st.push('font-style:italic');
+                if (c===4) st.push('text-decoration:underline');
+                if (ansiColors[c]) st.push('color:'+ansiColors[c]);
+                if (ansiBgColors[c]) st.push('background:'+ansiBgColors[c]);
+                if (st.length) { res += '<span style="'+st.join(';')+'">'; open++; }
+              }
+            }
+          }
+          res += escH(r.substring(li));
+          while (open > 0) { res += '</span>'; open--; }
+          return res;
+        }
+        el.innerHTML = ansiToHtml(raw);
+      })();
+    </script>
+  </body>
+  </html>
+  `;
+}
+
+module.exports = {
+  toolingListPage,
+  toolingEditorPage,
+  toolRunOutputPage,
+};
